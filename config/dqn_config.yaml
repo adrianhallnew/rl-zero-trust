@@ -1,0 +1,67 @@
+# DQN (Deep Q-Network) Configuration
+# RL-Driven Adaptive Security System for Zero-Trust Networks
+#
+# Reference: Mnih et al. (2015), adapted for CPU-constrained environment
+# Tuning priority: reward weights > learning_rate > architecture > batch_size > epsilon > gamma
+
+dqn:
+  # Network Architecture
+  hidden_layers: [128, 128, 64]       # 3 layers, CPU-friendly size
+  activation: "relu"
+  output_activation: "linear"         # Q-values are unbounded
+
+  # Training
+  learning_rate: 0.001                # Start here, reduce to 0.0001 if unstable
+  batch_size: 64                      # 32-128 range; 64 balances speed/stability
+  gamma: 0.99                         # High discount — security requires long-term thinking
+  tau: 0.005                          # Soft target update rate
+  target_update_freq: 10000           # Hard update every N steps (if not using soft update)
+
+  # Exploration (epsilon-greedy)
+  epsilon_start: 1.0
+  epsilon_end: 0.05                   # Never fully stop exploring (network conditions change)
+  epsilon_decay_steps: 50000          # Linear decay over this many steps
+
+  # Replay Buffer
+  buffer_size: 100000                 # ~100K transitions; 1M would exceed RAM
+  min_buffer_size: 1000               # Don't train until this many transitions collected
+
+  # Training Loop
+  train_freq: 4                       # Train every 4 environment steps
+  max_episodes: 500
+  max_steps_per_episode: 200
+
+  # Reproducibility
+  seed: 42
+
+# Action Space (discrete)
+actions:
+  0: "ALLOW"                          # Permit traffic flow normally
+  1: "BLOCK"                          # Drop packets matching malicious flow
+  2: "REROUTE"                        # Redirect traffic through alternative path
+  3: "RATE_LIMIT"                     # Throttle suspicious traffic to 50% bandwidth
+
+# Reward Function Weights
+# R(t) = w_det * R_detection + w_fp * R_false_positive + w_thr * R_throughput
+#        + w_lat * R_latency + w_stab * R_stability
+reward:
+  w_det: 0.40                         # Detection is the primary objective
+  w_fp: 0.25                          # False positives severely punished (survey: 51.9% cite this)
+  w_thr: 0.15                         # Throughput maintenance
+  w_lat: 0.10                         # Latency maintenance
+  w_stab: 0.10                        # Policy stability
+  epsilon: 1.0e-8                     # Numerical stability
+  max_acceptable_latency_ms: 50.0
+  max_changes_per_step: 5
+
+# Checkpointing
+checkpoint:
+  save_dir: "checkpoints/dqn"
+  save_freq: 50                       # Save every N episodes
+  keep_last: 5                        # Keep last N checkpoints
+
+# Logging
+logging:
+  log_dir: "results/logs/dqn"
+  log_freq: 10                        # Log metrics every N episodes
+  verbose: true

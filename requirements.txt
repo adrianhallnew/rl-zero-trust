@@ -1,0 +1,29 @@
+# RL-Driven Adaptive Security System for Zero-Trust Networks
+# Python dependencies (pinned versions for reproducibility)
+# Target: Python 3.10 | CPU-only training
+
+# --- Core ML/RL Framework ---
+tensorflow-cpu==2.15.0
+numpy==1.26.4
+gymnasium==0.29.1
+
+# --- Data Processing & Visualization ---
+matplotlib==3.8.3
+pandas==2.2.0
+
+# --- Configuration & Utilities ---
+PyYAML==6.0.1
+requests==2.31.0
+
+# --- Logging & Monitoring ---
+tensorboard==2.15.1
+
+# --- Testing ---
+pytest==7.4.4
+pytest-cov==4.1.0
+
+# --- Network Security (attack simulation) ---
+scapy==2.5.0
+
+# --- OpenZiti SDK (Sprint 6) ---
+openziti==0.8.1

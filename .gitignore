@@ -214,7 +214,10 @@ results/logs/
 *.h5
 *.keras
 __pycache__/
-.env
+.env.*
 
 *.md
 !README.md
+!docs/**/*.md
+
+*.local.json

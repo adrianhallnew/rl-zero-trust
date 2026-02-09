@@ -1,0 +1,67 @@
+# PPO (Proximal Policy Optimization) Configuration
+# RL-Driven Adaptive Security System for Zero-Trust Networks
+#
+# Reference: Schulman et al. (2017), adapted for CPU-constrained environment
+# Tuning priority: reward weights > learning_rate > architecture > batch_size > epsilon > gamma
+
+ppo:
+  # Network Architecture
+  actor_layers: [128, 128, 64]
+  critic_layers: [128, 128, 64]
+  shared_layers: [128]                # Optional shared feature extraction
+  activation: "relu"
+
+  # PPO Core
+  learning_rate: 0.0003               # PPO typically uses lower LR than DQN
+  clip_epsilon: 0.2                   # Standard PPO clip (Schulman et al. 2017)
+  gamma: 0.99
+  gae_lambda: 0.95                    # GAE parameter — 0.95 is standard
+
+  # Training
+  n_epochs: 10                        # PPO epochs per batch of experience
+  batch_size: 64
+  n_steps: 2048                       # Steps collected before each training update
+  entropy_coefficient: 0.01           # Encourages exploration
+  value_loss_coefficient: 0.5         # Weight of critic loss relative to actor loss
+  max_grad_norm: 0.5                  # Gradient clipping
+
+  # Training Loop
+  total_timesteps: 100000
+
+  # Reproducibility
+  seed: 42
+
+# Action Space (continuous)
+actions:
+  rate_limit_intensity:               # [0.0, 1.0] — 0 = no limit, 1 = full block
+    min: 0.0
+    max: 1.0
+  rerouting_weight:                   # [0.0, 1.0] — probability of alternative path
+    min: 0.0
+    max: 1.0
+  priority_adjustment:                # [-1.0, 1.0] — decrease/increase QoS priority
+    min: -1.0
+    max: 1.0
+
+# Reward Function Weights (shared with DQN for fair comparison)
+reward:
+  w_det: 0.40                         # Detection is the primary objective
+  w_fp: 0.25                          # False positives severely punished
+  w_thr: 0.15                         # Throughput maintenance
+  w_lat: 0.10                         # Latency maintenance
+  w_stab: 0.10                        # Policy stability
+  epsilon: 1.0e-8                     # Numerical stability
+  max_acceptable_latency_ms: 50.0
+  max_changes_per_step: 5
+
+# Checkpointing
+checkpoint:
+  save_dir: "checkpoints/ppo"
+  save_freq: 50                       # Save every N episodes
+  keep_last: 5                        # Keep last N checkpoints
+
+# Logging
+logging:
+  log_dir: "results/logs/ppo"
+  log_freq: 10                        # Log metrics every N episodes
+  verbose: true

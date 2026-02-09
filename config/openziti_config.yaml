@@ -1,0 +1,107 @@
+# OpenZiti Zero-Trust Configuration
+# RL-Driven Adaptive Security System for Zero-Trust Networks
+#
+# Defines identities, services, and policies for inter-component security
+# Full integration: Sprint 6
+
+controller:
+  address: "openziti-controller"
+  port: 1280
+  management_port: 6262
+
+edge_router:
+  address: "openziti-controller"
+  port: 3022
+  tunneler_enabled: true
+
+# Component Identities
+# Each component gets a unique identity with X.509 certificate
+identities:
+  rl_agent:
+    name: "rl-agent-identity"
+    type: "Device"
+    role_attributes:
+      - "rl-agents"
+      - "policy-writers"
+  ryu_controller:
+    name: "ryu-controller-identity"
+    type: "Device"
+    role_attributes:
+      - "sdn-controllers"
+      - "policy-enforcers"
+  mininet_monitor:
+    name: "mininet-monitor-identity"
+    type: "Device"
+    role_attributes:
+      - "network-monitors"
+      - "stats-providers"
+
+# Services (dark services — no inbound ports exposed)
+services:
+  sdn_controller_api:
+    name: "sdn-controller-api"
+    description: "Ryu REST API for flow statistics and policy enforcement"
+    protocol: "tcp"
+    address: "ryu-controller"
+    port: 8080
+    hosting_identities:
+      - "ryu-controller-identity"
+    allowed_identities:
+      - "rl-agent-identity"
+
+  policy_engine:
+    name: "policy-engine"
+    description: "RL agent policy update endpoint"
+    protocol: "tcp"
+    address: "rl-agent"
+    port: 5000
+    hosting_identities:
+      - "rl-agent-identity"
+    allowed_identities:
+      - "ryu-controller-identity"
+
+  monitoring_feed:
+    name: "monitoring-feed"
+    description: "Network statistics feed from Mininet"
+    protocol: "tcp"
+    address: "mininet"
+    port: 9090
+    hosting_identities:
+      - "mininet-monitor-identity"
+    allowed_identities:
+      - "rl-agent-identity"
+
+# Service Policies
+policies:
+  rl_to_sdn:
+    name: "rl-agent-to-sdn-controller"
+    type: "Dial"
+    service_roles:
+      - "#sdn-controller-api"
+    identity_roles:
+      - "#rl-agents"
+
+  sdn_to_rl:
+    name: "sdn-controller-to-rl-agent"
+    type: "Dial"
+    service_roles:
+      - "#policy-engine"
+    identity_roles:
+      - "#sdn-controllers"
+
+  monitor_to_rl:
+    name: "monitor-to-rl-agent"
+    type: "Dial"
+    service_roles:
+      - "#monitoring-feed"
+    identity_roles:
+      - "#rl-agents"
+
+# Posture Checks (Sprint 6 — verify endpoint security before authorization)
+posture_checks:
+  process_check:
+    name: "python-process-check"
+    type: "PROCESS"
+    process:
+      os_type: "Linux"
+      path: "/usr/bin/python3"

@@ -1,0 +1,143 @@
+# RL-Driven Adaptive Security System for Zero-Trust Networks
+# Docker Compose orchestration for all system components
+#
+# Startup order:
+#   1. OpenZiti control plane (identity & mTLS management)
+#   2. Ryu SDN controller (OpenFlow 1.3, REST API)
+#   3. Mininet topology (5 switches, 15 hosts)
+#   4. RL agent (DQN/PPO training)
+#
+# Resource budget (16 GB total):
+#   Mininet: 4 GB | Ryu: 2 GB | RL Agent: 4 GB | OpenZiti: 1 GB
+#   System headroom: ~2-3 GB
+
+services:
+
+  # --- Zero-Trust Overlay ---
+  openziti-controller:
+    build:
+      context: .
+      dockerfile: docker/openziti/Dockerfile
+    container_name: openziti-controller
+    hostname: openziti-controller
+    networks:
+      zt-network:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "1280:1280"   # Controller API
+      - "3022:3022"   # Edge Router
+      - "6262:6262"   # Management
+    volumes:
+      - openziti-data:/openziti
+    environment:
+      - ZITI_CTRL_ADVERTISED_ADDRESS=openziti-controller
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_ROUTER_ADVERTISED_ADDRESS=openziti-controller
+      - ZITI_ROUTER_PORT=3022
+      - ZITI_PWD=${ZITI_PWD:-admin}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+
+  # --- SDN Controller ---
+  ryu-controller:
+    build:
+      context: .
+      dockerfile: docker/ryu/Dockerfile
+    container_name: ryu-controller
+    hostname: ryu-controller
+    networks:
+      zt-network:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "6633:6633"   # OpenFlow 1.3
+      - "8080:8080"   # REST API
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    depends_on:
+      openziti-controller:
+        condition: service_started
+    restart: unless-stopped
+
+  # --- Network Simulation ---
+  mininet:
+    build:
+      context: .
+      dockerfile: docker/mininet/Dockerfile
+    container_name: mininet
+    hostname: mininet
+    privileged: true
+    networks:
+      zt-network:
+        ipv4_address: 172.20.0.30
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config:ro
+      - ./captures:/app/captures
+    environment:
+      - RYU_CONTROLLER_IP=172.20.0.20
+      - RYU_CONTROLLER_PORT=6633
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    depends_on:
+      ryu-controller:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- RL Training Agent ---
+  rl-agent:
+    build:
+      context: .
+      dockerfile: docker/rl_agent/Dockerfile
+    container_name: rl-agent
+    hostname: rl-agent
+    networks:
+      zt-network:
+        ipv4_address: 172.20.0.40
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config:ro
+      - ./scripts:/app/scripts
+      - ./results:/app/results
+      - ./checkpoints:/app/checkpoints
+      - ./notebooks:/app/notebooks
+    environment:
+      - RYU_API_URL=http://172.20.0.20:8080
+      - PYTHONPATH=/app
+      - TF_CPP_MIN_LOG_LEVEL=2
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    depends_on:
+      mininet:
+        condition: service_started
+    restart: unless-stopped
+
+networks:
+  zt-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  openziti-data:
+    driver: local
