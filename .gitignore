@@ -215,3 +215,6 @@ results/logs/
 *.keras
 __pycache__/
 .env
+
+*.md
+!README.md
