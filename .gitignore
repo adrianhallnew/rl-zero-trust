@@ -215,9 +215,8 @@ results/logs/
 *.keras
 __pycache__/
 .env.*
-
 *.md
 !README.md
 !docs/**/*.md
-
 *.local.json
+.vscode/
