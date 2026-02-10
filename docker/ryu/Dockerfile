@@ -34,10 +34,9 @@ EXPOSE 6633 8080
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=15s \
     CMD curl -sf http://localhost:8080/stats/switches || exit 1
 
-# Default: run built-in L2 switch with OpenFlow 1.3
-# Sprint 2 will replace this with custom ryu_app.py
+# Run custom L2 switch (ZeroTrustSwitch) alongside REST API
 CMD ["ryu-manager", \
-     "ryu.app.simple_switch_13", \
+     "src/sdn/ryu_app.py", \
      "ryu.app.ofctl_rest", \
      "--verbose", \
      "--ofp-tcp-listen-port", "6633"]

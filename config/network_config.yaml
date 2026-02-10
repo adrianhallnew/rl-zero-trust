@@ -4,12 +4,15 @@
 # Defines Mininet topology, link parameters, and traffic profiles
 
 topology:
-  type: "tree"
-  depth: 2                            # 2 levels of switches
-  fanout: 5                           # 5 children per switch node
-  # Result: 1 root switch + 5 leaf switches = 6 switches, 25 hosts
-  # Adjusted: depth=2, fanout=3 for root, fanout=5 for leaves
-  # Final: 5 switches, 15 hosts (as specified)
+  type: "custom_tree"
+  num_switches: 5                     # s1 (core) + s2-s5 (edge)
+  hosts_per_switch: 3                 # 3 hosts per switch = 15 total
+  total_hosts: 15
+  # Layout: s1 (core) connects to s2, s3, s4, s5 (edge switches)
+  #   s1: h1, h2, h3      s2: h4, h5, h6      s3: h7, h8, h9
+  #   s4: h10, h11, h12   s5: h13, h14, h15
+  # Host IPs: 10.0.0.1 through 10.0.0.15
+  # Host MACs: 00:00:00:00:00:01 through 00:00:00:00:00:0f
   controller:
     ip: "172.20.0.20"                 # Ryu controller IP (Docker network)
     port: 6633                        # OpenFlow port
