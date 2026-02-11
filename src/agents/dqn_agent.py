@@ -7,8 +7,6 @@ Implements the core DQN algorithm with:
     - TensorBoard logging of loss, Q-values, and epsilon.
 
 Hyperparameters are loaded from ``config/dqn_config.yaml``.
-
-Reference: Mnih et al. (2015) — Human-level control through deep RL.
 """
 
 import logging

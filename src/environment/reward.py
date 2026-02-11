@@ -6,8 +6,6 @@ Implements the composite reward function:
 
 Each component captures a different aspect of security and network health.
 Weights are loaded from config/dqn_config.yaml (or ppo_config.yaml).
-
-Reference: Section 4.4 of the system design (reward function specification).
 """
 
 import logging
