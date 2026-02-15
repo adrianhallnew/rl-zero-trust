@@ -10,10 +10,10 @@ The environment supports two operating modes:
    Observations come from real flow/port statistics, and actions are
    enforced as OpenFlow rules.
 
-2. **Simulation mode** — no controller connection.  Uses a lightweight
-   traffic simulator that generates synthetic observations and rewards.
-   This is the default for unit testing and rapid prototyping before
-   full Docker integration.
+2. **Simulation mode** — no controller connection.  Uses the attack
+   orchestrator module to generate synthetic observations with realistic
+   attack signatures for DDoS, port scanning, and spoofing.
+   This is the default for training and unit testing without Docker.
 
 State space: Box(65,) float32  — 5 switches x 13 features.
 Action space: Discrete(4)      — ALLOW / BLOCK / REROUTE / RATE_LIMIT.
@@ -26,6 +26,11 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from src.attacks.mixed_scenario import (
+    AttackOrchestrator,
+    MixedScenarioConfig,
+    ScenarioType,
+)
 from src.environment.reward import RewardCalculator, RewardComponents
 from src.environment.state_processor import StateProcessor, STATE_DIM
 
@@ -52,6 +57,9 @@ class NetworkSecurityEnv(gym.Env):
         max_steps: Maximum steps per episode before truncation.
         moving_avg_window: State processor smoothing window.
         seed: Random seed for reproducibility.
+        scenario_type: Attack scenario for simulation mode training.
+            Defaults to ``RANDOM`` for diverse attack exposure.
+        attack_config: Optional custom ``MixedScenarioConfig``.
 
     Example:
         >>> from src.utils.config_loader import get_reward_config
@@ -72,6 +80,8 @@ class NetworkSecurityEnv(gym.Env):
         max_steps: int = 200,
         moving_avg_window: int = 10,
         seed: int = 42,
+        scenario_type: Optional[ScenarioType] = None,
+        attack_config: Optional[MixedScenarioConfig] = None,
     ) -> None:
         super().__init__()
 
@@ -110,8 +120,27 @@ class NetworkSecurityEnv(gym.Env):
         # Simulation mode state
         self._sim_mode = stats_collector is None
         self._rng = np.random.RandomState(seed)
+        self._seed = seed
         self._sim_attack_active = False
         self._sim_attack_type: Optional[str] = None
+
+        # Attack orchestrator (simulation mode)
+        if self._sim_mode:
+            if attack_config is not None:
+                self._attack_config = attack_config
+            else:
+                self._attack_config = MixedScenarioConfig(
+                    scenario_type=scenario_type or ScenarioType.RANDOM,
+                    attack_probability=0.15,
+                    max_concurrent_attacks=2,
+                    min_gap_steps=5,
+                    max_gap_steps=30,
+                    normal_traffic_steps=10,
+                    seed=seed,
+                )
+            self._orchestrator = AttackOrchestrator(self._attack_config)
+        else:
+            self._orchestrator = None
 
         # Traffic simulation parameters
         self._sim_throughput = DEFAULT_BASELINE_THROUGHPUT
@@ -156,6 +185,10 @@ class NetworkSecurityEnv(gym.Env):
         self._sim_attack_type = None
         self._sim_throughput = DEFAULT_BASELINE_THROUGHPUT
         self._sim_latency = 5.0
+
+        # Reset attack orchestrator
+        if self._orchestrator is not None:
+            self._orchestrator.reset()
 
         observation = self._get_observation()
 
@@ -218,6 +251,7 @@ class NetworkSecurityEnv(gym.Env):
             "metrics": metrics,
             "cumulative_reward": self._cumulative_reward,
             "attack_active": self._sim_attack_active,
+            "attack_type": self._sim_attack_type,
         }
 
         if self.policy_enforcer is not None:
@@ -265,9 +299,8 @@ class NetworkSecurityEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """Get the current state observation.
 
-        In simulation mode, generates a synthetic state vector that
-        reflects whether an attack is active and what traffic conditions
-        look like.
+        In simulation mode, generates a synthetic state vector and uses
+        the attack orchestrator to inject realistic attack signatures.
         """
         if not self._sim_mode:
             return self.state_processor.get_state()
@@ -277,66 +310,92 @@ class NetworkSecurityEnv(gym.Env):
     def _generate_simulated_state(self) -> np.ndarray:
         """Generate a synthetic state vector for simulation mode.
 
-        Produces realistic-looking network features with noise, and
-        injects attack signatures when an attack is active.
+        Uses the attack orchestrator to inject realistic attack signatures
+        from DDoS, port scan, and spoofing modules rather than hard-coded
+        modifications.
         """
         state = np.zeros(STATE_DIM, dtype=np.float32)
 
+        # Generate baseline traffic features with noise
         for sw in range(5):
             offset = sw * 13
 
-            # Baseline features with noise
-            state[offset + 0] = self._rng.uniform(0.05, 0.30)  # flow count
-            state[offset + 1] = self._rng.uniform(3.0, 6.0)    # packets (log)
-            state[offset + 2] = self._rng.uniform(8.0, 12.0)   # bytes (log)
-            state[offset + 3] = self._rng.uniform(0.05, 0.20)  # avg duration
-            state[offset + 4] = self._rng.uniform(3.0, 5.0)    # rx_packets
-            state[offset + 5] = self._rng.uniform(3.0, 5.0)    # tx_packets
-            state[offset + 6] = self._rng.uniform(8.0, 11.0)   # rx_bytes
-            state[offset + 7] = self._rng.uniform(8.0, 11.0)   # tx_bytes
-            state[offset + 8] = self._rng.uniform(0.0, 0.5)    # rx_dropped
-            state[offset + 9] = self._rng.uniform(0.0, 0.5)    # tx_dropped
-            state[offset + 10] = self._rng.uniform(0.0, 0.1)   # rx_errors
-            state[offset + 11] = self._rng.uniform(0.0, 0.1)   # tx_errors
-            state[offset + 12] = self._rng.uniform(0.5, 2.0)   # conn rate
+            state[offset + 0] = self._rng.uniform(0.05, 0.30)   # flow count
+            state[offset + 1] = self._rng.uniform(3.0, 6.0)     # packets (log)
+            state[offset + 2] = self._rng.uniform(8.0, 12.0)    # bytes (log)
+            state[offset + 3] = self._rng.uniform(0.05, 0.20)   # avg duration
+            state[offset + 4] = self._rng.uniform(3.0, 5.0)     # rx_packets
+            state[offset + 5] = self._rng.uniform(3.0, 5.0)     # tx_packets
+            state[offset + 6] = self._rng.uniform(8.0, 11.0)    # rx_bytes
+            state[offset + 7] = self._rng.uniform(8.0, 11.0)    # tx_bytes
+            state[offset + 8] = self._rng.uniform(0.0, 0.5)     # rx_dropped
+            state[offset + 9] = self._rng.uniform(0.0, 0.5)     # tx_dropped
+            state[offset + 10] = self._rng.uniform(0.0, 0.1)    # rx_errors
+            state[offset + 11] = self._rng.uniform(0.0, 0.1)    # tx_errors
+            state[offset + 12] = self._rng.uniform(0.5, 2.0)    # conn rate
 
-        # Randomly trigger attacks
+        # Use attack orchestrator for realistic attack injection
+        if self._orchestrator is not None:
+            state, orch_info = self._orchestrator.step(state)
+            self._sim_attack_active = orch_info["attack_active"]
+            self._sim_throughput = orch_info["throughput_mbps"]
+            self._sim_latency = orch_info["latency_ms"]
+
+            # Extract primary attack type for info dict
+            if self._sim_attack_active and orch_info["active_attacks"]:
+                primary = orch_info["active_attacks"][0]
+                # Map attack names to simple types
+                if "ddos" in primary:
+                    self._sim_attack_type = "ddos"
+                elif "port_scan" in primary:
+                    self._sim_attack_type = "port_scan"
+                elif "spoofing" in primary:
+                    self._sim_attack_type = "spoofing"
+                else:
+                    self._sim_attack_type = primary
+            else:
+                self._sim_attack_type = None
+        else:
+            # Fallback: legacy inline attack injection
+            self._legacy_attack_injection(state)
+
+        return self.state_processor.process_raw_state(state)
+
+    def _legacy_attack_injection(self, state: np.ndarray) -> None:
+        """Legacy inline attack injection for backward compatibility.
+
+        Used only when no attack orchestrator is available.
+        """
         if not self._sim_attack_active and self._rng.random() < 0.15:
             self._sim_attack_active = True
             self._sim_attack_type = self._rng.choice(
                 ["ddos", "port_scan", "spoofing"]
             )
 
-        # Inject attack signatures into state
         if self._sim_attack_active:
             target_sw = self._rng.randint(0, 5)
             offset = target_sw * 13
 
             if self._sim_attack_type == "ddos":
-                state[offset + 0] += self._rng.uniform(0.3, 0.7)   # more flows
-                state[offset + 1] += self._rng.uniform(3.0, 6.0)   # many packets
-                state[offset + 2] += self._rng.uniform(2.0, 4.0)   # more bytes
-                state[offset + 8] += self._rng.uniform(1.0, 3.0)   # drops spike
-                state[offset + 12] += self._rng.uniform(3.0, 8.0)  # conn rate spike
-
+                state[offset + 0] += self._rng.uniform(0.3, 0.7)
+                state[offset + 1] += self._rng.uniform(3.0, 6.0)
+                state[offset + 2] += self._rng.uniform(2.0, 4.0)
+                state[offset + 8] += self._rng.uniform(1.0, 3.0)
+                state[offset + 12] += self._rng.uniform(3.0, 8.0)
             elif self._sim_attack_type == "port_scan":
-                state[offset + 0] += self._rng.uniform(0.4, 0.8)   # many short flows
-                state[offset + 3] = self._rng.uniform(0.01, 0.05)  # very short duration
-                state[offset + 12] += self._rng.uniform(5.0, 15.0) # high conn rate
-
+                state[offset + 0] += self._rng.uniform(0.4, 0.8)
+                state[offset + 3] = self._rng.uniform(0.01, 0.05)
+                state[offset + 12] += self._rng.uniform(5.0, 15.0)
             elif self._sim_attack_type == "spoofing":
                 state[offset + 0] += self._rng.uniform(0.1, 0.3)
-                state[offset + 10] += self._rng.uniform(0.5, 2.0)  # errors up
+                state[offset + 10] += self._rng.uniform(0.5, 2.0)
                 state[offset + 11] += self._rng.uniform(0.5, 2.0)
 
-            # Attacks degrade throughput and increase latency
             self._sim_throughput = self._rng.uniform(30.0, 70.0)
             self._sim_latency = self._rng.uniform(15.0, 45.0)
         else:
             self._sim_throughput = self._rng.uniform(85.0, 100.0)
             self._sim_latency = self._rng.uniform(2.0, 8.0)
-
-        return self.state_processor.process_raw_state(state)
 
     # ------------------------------------------------------------------
     # Step Metrics
@@ -345,8 +404,9 @@ class NetworkSecurityEnv(gym.Env):
     def _compute_step_metrics(self, action: int) -> Dict[str, Any]:
         """Compute security and performance metrics for reward calculation.
 
-        In simulation mode, uses a simple probabilistic model.
-        In live mode, this would query actual detection results.
+        In simulation mode, uses the attack orchestrator's metric model
+        for realistic confusion-matrix generation.
+        In live mode, queries actual detection results.
         """
         if not self._sim_mode:
             return self._compute_live_metrics(action)
@@ -354,31 +414,42 @@ class NetworkSecurityEnv(gym.Env):
         return self._compute_simulated_metrics(action)
 
     def _compute_simulated_metrics(self, action: int) -> Dict[str, Any]:
-        """Probabilistic metric simulation for offline training.
+        """Compute simulated metrics using the attack orchestrator.
 
-        The simulation rewards correct actions:
+        The orchestrator provides confusion matrix values that reward
+        correct actions:
         - BLOCK/RATE_LIMIT during attacks -> higher detection
         - ALLOW during normal traffic -> lower false positives
         - REROUTE during attacks -> moderate detection, good throughput
         """
-        attack = self._sim_attack_active
+        if self._orchestrator is not None:
+            metrics = self._orchestrator.get_step_metrics(
+                action, self._sim_attack_active,
+            )
+            # Override throughput/latency with current sim state
+            metrics["current_throughput_mbps"] = self._sim_throughput
+            metrics["current_latency_ms"] = self._sim_latency
+            return metrics
 
-        # Base confusion matrix
+        # Fallback: legacy metric computation
+        return self._compute_legacy_metrics(action)
+
+    def _compute_legacy_metrics(self, action: int) -> Dict[str, Any]:
+        """Legacy metric computation for backward compatibility."""
+        attack = self._sim_attack_active
         tp, fn, fp, tn = 0, 0, 0, 0
 
         if attack:
-            # Attack is happening
-            if action in (1, 3):    # BLOCK or RATE_LIMIT
+            if action in (1, 3):
                 tp = self._rng.randint(7, 11)
                 fn = self._rng.randint(0, 3)
                 fp = self._rng.randint(0, 2)
                 tn = 90 - fp
-                # Blocking helps throughput recover
                 self._sim_throughput = min(
                     self._sim_throughput + self._rng.uniform(10, 25),
                     DEFAULT_BASELINE_THROUGHPUT,
                 )
-            elif action == 2:       # REROUTE
+            elif action == 2:
                 tp = self._rng.randint(5, 8)
                 fn = self._rng.randint(2, 5)
                 fp = self._rng.randint(0, 1)
@@ -387,30 +458,28 @@ class NetworkSecurityEnv(gym.Env):
                     self._sim_throughput + self._rng.uniform(5, 15),
                     DEFAULT_BASELINE_THROUGHPUT,
                 )
-            else:                   # ALLOW — bad during attack
+            else:
                 tp = self._rng.randint(0, 2)
                 fn = self._rng.randint(7, 10)
                 fp = 0
                 tn = 90
 
-            # Attack may end with some probability
             if self._rng.random() < 0.20:
                 self._sim_attack_active = False
                 self._sim_attack_type = None
         else:
-            # No attack — normal traffic
-            if action in (1, 3):    # BLOCK/RATE_LIMIT — bad during normal
+            if action in (1, 3):
                 tp = 0
                 fn = 0
                 fp = self._rng.randint(3, 8)
                 tn = 90 - fp
                 self._sim_throughput *= self._rng.uniform(0.7, 0.9)
-            elif action == 2:       # REROUTE — mild disruption
+            elif action == 2:
                 tp = 0
                 fn = 0
                 fp = self._rng.randint(1, 3)
                 tn = 90 - fp
-            else:                   # ALLOW — correct during normal
+            else:
                 tp = 0
                 fn = 0
                 fp = 0
@@ -435,8 +504,6 @@ class NetworkSecurityEnv(gym.Env):
 
         In live mode, detection metrics come from comparing the
         policy enforcer's actions against known attack ground truth.
-        This is a placeholder that returns conservative estimates
-        until the attack simulator (Sprint 4) provides ground truth.
         """
         policy_changes = 0
         if self.policy_enforcer is not None:

@@ -308,6 +308,198 @@ def plot_throughput_comparison(
     return _save_figure(fig, filename, output_dir)
 
 
+def plot_confusion_matrix(
+    tp: int,
+    fn: int,
+    fp: int,
+    tn: int,
+    title: str = "Confusion Matrix",
+    filename: str = "confusion_matrix",
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot a confusion matrix heatmap.
+
+    Args:
+        tp: True positives.
+        fn: False negatives.
+        fp: False positives.
+        tn: True negatives.
+        title: Chart title.
+        filename: Output filename (without extension).
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    cm = np.array([[tp, fn], [fp, tn]])
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    im = ax.imshow(cm, cmap="Blues", aspect="auto")
+
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(["Predicted Attack", "Predicted Normal"])
+    ax.set_yticklabels(["Actual Attack", "Actual Normal"])
+
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, f"{cm[i, j]:,}", ha="center", va="center",
+                    fontsize=16, fontweight="bold",
+                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+
+    ax.set_title(title, fontweight="bold")
+    fig.colorbar(im, ax=ax, shrink=0.8)
+
+    return _save_figure(fig, filename, output_dir)
+
+
+def plot_detection_by_type(
+    attack_types: List[str],
+    detection_rates: List[float],
+    thresholds: Optional[List[float]] = None,
+    title: str = "Detection Rate by Attack Type",
+    filename: str = "detection_by_type",
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot detection rate bar chart per attack type with threshold overlay.
+
+    Args:
+        attack_types: List of attack type labels.
+        detection_rates: Detection rates as percentages.
+        thresholds: Optional minimum threshold per type (percentage).
+        title: Chart title.
+        filename: Output filename.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    x = np.arange(len(attack_types))
+    width = 0.35
+
+    bars = ax.bar(x - width / 2, detection_rates, width, label="DQN Agent",
+                  color="#2196F3", edgecolor="black", alpha=0.85)
+
+    if thresholds is not None:
+        ax.bar(x + width / 2, thresholds, width, label="Min. Threshold",
+               color="#FF9800", edgecolor="black", alpha=0.6)
+
+    for bar, val in zip(bars, detection_rates):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                f"{val:.1f}%", ha="center", va="bottom", fontsize=10)
+
+    ax.set_xlabel("Attack Type")
+    ax.set_ylabel("Detection Rate (%)")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(attack_types)
+    ax.set_ylim(0, 110)
+    ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
+
+    return _save_figure(fig, filename, output_dir)
+
+
+def plot_baseline_comparison(
+    metrics: List[str],
+    dqn_values: List[float],
+    baseline_values: List[float],
+    title: str = "DQN Agent vs Static Baseline",
+    filename: str = "baseline_comparison",
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot side-by-side comparison of DQN vs static baseline.
+
+    Args:
+        metrics: Metric labels.
+        dqn_values: DQN metric values.
+        baseline_values: Static baseline metric values.
+        title: Chart title.
+        filename: Output filename.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+    x = np.arange(len(metrics))
+    width = 0.35
+
+    bars1 = ax.bar(x - width / 2, dqn_values, width, label="DQN Agent",
+                   color="#2196F3", edgecolor="black", alpha=0.85)
+    bars2 = ax.bar(x + width / 2, baseline_values, width, label="Static Baseline",
+                   color="#9E9E9E", edgecolor="black", alpha=0.7)
+
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width() / 2, height + 0.5,
+                    f"{height:.1f}", ha="center", va="bottom", fontsize=9)
+
+    ax.set_xlabel("Metric")
+    ax.set_ylabel("Value")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics, rotation=30, ha="right")
+    ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
+
+    return _save_figure(fig, filename, output_dir)
+
+
+def plot_reward_components(
+    episodes: List[int],
+    components: Dict[str, List[float]],
+    title: str = "Reward Components Over Training",
+    filename: str = "reward_components",
+    window: int = 20,
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot individual reward components over training episodes.
+
+    Args:
+        episodes: Episode numbers.
+        components: Dict mapping component name -> list of values.
+        title: Chart title.
+        filename: Output filename.
+        window: Moving average window.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+    colors = {
+        "r_detection": "#4CAF50",
+        "r_false_positive": "#F44336",
+        "r_throughput": "#2196F3",
+        "r_latency": "#FF9800",
+        "r_stability": "#9C27B0",
+    }
+
+    for name, values in components.items():
+        color = colors.get(name, None)
+        if len(values) >= window:
+            ma = np.convolve(values, np.ones(window) / window, mode="valid")
+            ax.plot(range(window, len(values) + 1), ma,
+                    label=name, color=color, linewidth=1.5)
+        else:
+            ax.plot(episodes[:len(values)], values,
+                    label=name, color=color, linewidth=1.5)
+
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Component Value")
+    ax.set_title(title, fontweight="bold")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    return _save_figure(fig, filename, output_dir)
+
+
 if __name__ == "__main__":
     # Generate topology visualization as a standalone script
     logging.basicConfig(level=logging.INFO)
