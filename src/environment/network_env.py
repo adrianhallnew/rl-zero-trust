@@ -15,8 +15,12 @@ The environment supports two operating modes:
    attack signatures for DDoS, port scanning, and spoofing.
    This is the default for training and unit testing without Docker.
 
+Action space modes:
+- **Discrete** (DQN): Discrete(4) — ALLOW / BLOCK / REROUTE / RATE_LIMIT.
+- **Continuous** (PPO): Box(3,) — rate_limit_intensity, rerouting_weight,
+  priority_adjustment.
+
 State space: Box(65,) float32  — 5 switches x 13 features.
-Action space: Discrete(4)      — ALLOW / BLOCK / REROUTE / RATE_LIMIT.
 """
 
 import logging
@@ -38,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 NUM_ACTIONS = 4
 ACTION_NAMES = {0: "ALLOW", 1: "BLOCK", 2: "REROUTE", 3: "RATE_LIMIT"}
+CONTINUOUS_ACTION_DIM = 3  # rate_limit_intensity, rerouting_weight, priority_adjustment
 
 # Simulation-mode defaults
 DEFAULT_BASELINE_THROUGHPUT = 100.0  # Mbps
@@ -82,6 +87,7 @@ class NetworkSecurityEnv(gym.Env):
         seed: int = 42,
         scenario_type: Optional[ScenarioType] = None,
         attack_config: Optional[MixedScenarioConfig] = None,
+        action_mode: str = "discrete",
     ) -> None:
         super().__init__()
 
@@ -90,7 +96,15 @@ class NetworkSecurityEnv(gym.Env):
             low=-np.inf, high=np.inf,
             shape=(STATE_DIM,), dtype=np.float32,
         )
-        self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self._action_mode = action_mode
+        if action_mode == "continuous":
+            self.action_space = spaces.Box(
+                low=np.array([0.0, 0.0, -1.0], dtype=np.float32),
+                high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
+        else:
+            self.action_space = spaces.Discrete(NUM_ACTIONS)
 
         # Components
         self.state_processor = StateProcessor(
@@ -147,8 +161,8 @@ class NetworkSecurityEnv(gym.Env):
         self._sim_latency = 5.0  # ms
 
         logger.info(
-            "NetworkSecurityEnv initialized: mode=%s, max_steps=%d",
-            "simulation" if self._sim_mode else "live", max_steps,
+            "NetworkSecurityEnv initialized: mode=%s, action_mode=%s, max_steps=%d",
+            "simulation" if self._sim_mode else "live", action_mode, max_steps,
         )
 
     # ------------------------------------------------------------------
@@ -201,19 +215,30 @@ class NetworkSecurityEnv(gym.Env):
         return observation, info
 
     def step(
-        self, action: int,
+        self, action,
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one environment step.
 
         Args:
-            action: Discrete action index (0-3).
+            action: Discrete action index (0-3) or continuous action array
+                of shape (3,) depending on action_mode.
 
         Returns:
             Tuple of (observation, reward, terminated, truncated, info).
         """
-        assert self.action_space.contains(action), f"Invalid action: {action}"
-
         self._current_step += 1
+
+        # Map continuous action to discrete for internal reward model
+        if self._action_mode == "continuous":
+            continuous_action = np.asarray(action, dtype=np.float32)
+            discrete_action = self._continuous_to_discrete(continuous_action)
+        else:
+            discrete_action = int(action)
+            continuous_action = None
+
+        assert 0 <= discrete_action < NUM_ACTIONS, (
+            f"Invalid discrete action: {discrete_action}"
+        )
 
         # Reset per-step policy counter
         if self.policy_enforcer is not None:
@@ -224,11 +249,11 @@ class NetworkSecurityEnv(gym.Env):
             # In live mode, enforce on all switches
             for dpid in range(1, 6):
                 self.policy_enforcer.enforce_action(
-                    action, dpid, match_fields={},
+                    discrete_action, dpid, match_fields={},
                 )
 
         # Compute metrics for reward
-        metrics = self._compute_step_metrics(action)
+        metrics = self._compute_step_metrics(discrete_action)
 
         # Calculate reward
         reward_components = self.reward_calculator.compute(metrics)
@@ -245,8 +270,8 @@ class NetworkSecurityEnv(gym.Env):
 
         info = {
             "step": self._current_step,
-            "action": action,
-            "action_name": ACTION_NAMES[action],
+            "action": discrete_action,
+            "action_name": ACTION_NAMES[discrete_action],
             "reward_components": reward_components.to_dict(),
             "metrics": metrics,
             "cumulative_reward": self._cumulative_reward,
@@ -254,16 +279,47 @@ class NetworkSecurityEnv(gym.Env):
             "attack_type": self._sim_attack_type,
         }
 
+        if continuous_action is not None:
+            info["continuous_action"] = continuous_action.tolist()
+
         if self.policy_enforcer is not None:
             info["policy_changes"] = self.policy_enforcer.get_policy_changes()
 
         logger.debug(
             "Step %d: action=%s, reward=%.4f, attack=%s",
-            self._current_step, ACTION_NAMES[action], reward,
+            self._current_step, ACTION_NAMES[discrete_action], reward,
             self._sim_attack_type or "none",
         )
 
         return observation, reward, terminated, truncated, info
+
+    @staticmethod
+    def _continuous_to_discrete(action: np.ndarray) -> int:
+        """Map continuous PPO action to discrete action for reward model.
+
+        Mapping:
+            rate_limit_intensity > 0.7 → BLOCK (1)
+            rate_limit_intensity > 0.3 → RATE_LIMIT (3)
+            rerouting_weight > 0.5     → REROUTE (2)
+            otherwise                  → ALLOW (0)
+
+        Args:
+            action: Continuous action array [rate_limit, reroute, priority].
+
+        Returns:
+            Discrete action in {0, 1, 2, 3}.
+        """
+        rate_limit = float(action[0])
+        reroute = float(action[1])
+
+        if rate_limit > 0.7:
+            return 1  # BLOCK
+        elif rate_limit > 0.3:
+            return 3  # RATE_LIMIT
+        elif reroute > 0.5:
+            return 2  # REROUTE
+        else:
+            return 0  # ALLOW
 
     def render(self, mode: str = "human") -> Optional[str]:
         """Render the current environment state.
