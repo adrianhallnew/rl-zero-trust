@@ -1,16 +1,22 @@
 """Evaluation script for the RL-driven adaptive security system.
 
-Loads a trained DQN model and runs evaluation episodes against each
+Loads a trained DQN or PPO model and runs evaluation episodes against each
 attack type (DDoS, port scan, spoofing, mixed). Computes all security
 and performance metrics against the defined thresholds, generates
 publication-quality charts, and exports results to CSV.
 
 Usage:
-    # Evaluate latest checkpoint (simulation mode)
+    # Evaluate DQN (default, backward compatible)
     python -m scripts.evaluate
 
+    # Evaluate PPO agent
+    python -m scripts.evaluate --agent ppo
+
+    # Evaluate with static baseline comparison
+    python -m scripts.evaluate --agent ppo --static-baseline
+
     # Evaluate specific checkpoint
-    python -m scripts.evaluate --checkpoint checkpoints/dqn/dqn_model_ep400.keras
+    python -m scripts.evaluate --agent dqn --checkpoint checkpoints/dqn/dqn_model_ep250.keras
 
     # Custom evaluation episodes
     python -m scripts.evaluate --episodes 50 --max-steps 200
@@ -29,6 +35,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agents.dqn_agent import DQNAgent
+from src.agents.ppo_agent import PPOAgent
 from src.attacks.mixed_scenario import MixedScenarioConfig, ScenarioType
 from src.environment.network_env import NetworkSecurityEnv
 from src.utils.config_loader import get_hyperparameters, get_reward_config
@@ -51,15 +58,35 @@ EVAL_SCENARIOS = [
     ("mixed", ScenarioType.ALL_COMBINED),
 ]
 
+# Agent-specific defaults
+AGENT_DEFAULTS = {
+    "dqn": {
+        "checkpoint": "checkpoints/dqn",
+        "results_dir": "results/dqn",
+        "config_key": "dqn",
+    },
+    "ppo": {
+        "checkpoint": "checkpoints/ppo",
+        "results_dir": "results/ppo",
+        "config_key": "ppo",
+    },
+}
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Evaluate trained DQN agent against attack scenarios",
+        description="Evaluate trained RL agent against attack scenarios",
     )
     parser.add_argument(
-        "--checkpoint", type=str, default="checkpoints/dqn",
-        help="Path to model checkpoint directory or .keras file",
+        "--agent", type=str, default="dqn",
+        choices=["dqn", "ppo"],
+        help="Agent type to evaluate (default: dqn)",
+    )
+    parser.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="Path to model checkpoint directory or .keras file "
+             "(default: checkpoints/{agent})",
     )
     parser.add_argument(
         "--episodes", type=int, default=30,
@@ -70,8 +97,8 @@ def parse_args() -> argparse.Namespace:
         help="Maximum steps per episode",
     )
     parser.add_argument(
-        "--results-dir", type=str, default="results/dqn",
-        help="Directory to save evaluation results",
+        "--results-dir", type=str, default=None,
+        help="Directory to save evaluation results (default: results/{agent})",
     )
     parser.add_argument(
         "--charts-dir", type=str, default="results/charts",
@@ -85,28 +112,60 @@ def parse_args() -> argparse.Namespace:
         "--static-baseline", action="store_true",
         help="Also run static baseline comparison (always ALLOW)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Apply agent-specific defaults if not explicitly set
+    defaults = AGENT_DEFAULTS[args.agent]
+    if args.checkpoint is None:
+        args.checkpoint = defaults["checkpoint"]
+    if args.results_dir is None:
+        args.results_dir = defaults["results_dir"]
+
+    return args
+
+
+def select_agent_action(agent, state: np.ndarray, agent_type: str) -> int:
+    """Select a discrete action from the agent in evaluation mode.
+
+    Handles the different action selection APIs for DQN and PPO agents.
+
+    Args:
+        agent: Trained DQN or PPO agent instance.
+        state: Current observation vector.
+        agent_type: Either "dqn" or "ppo".
+
+    Returns:
+        Discrete action in {0, 1, 2, 3}.
+    """
+    if agent_type == "dqn":
+        return agent.select_action(state, greedy=True)
+    else:
+        # PPO returns (continuous_action, log_prob, value)
+        continuous_action, _, _ = agent.select_action(
+            state, deterministic=True,
+        )
+        return PPOAgent.continuous_to_discrete(continuous_action)
 
 
 def run_evaluation_episodes(
-    agent: DQNAgent,
+    agent,
+    agent_type: str,
     scenario_type: ScenarioType,
     num_episodes: int,
     max_steps: int,
     reward_config: Dict[str, Any],
     seed: int = 42,
-    greedy: bool = True,
 ) -> Dict[str, Any]:
     """Run evaluation episodes for a specific attack scenario.
 
     Args:
-        agent: Trained DQN agent.
+        agent: Trained DQN or PPO agent instance.
+        agent_type: Either "dqn" or "ppo".
         scenario_type: Attack scenario to evaluate against.
         num_episodes: Number of episodes to run.
         max_steps: Maximum steps per episode.
         reward_config: Reward configuration dictionary.
         seed: Random seed for reproducibility.
-        greedy: If True, use greedy action selection (no exploration).
 
     Returns:
         Dictionary with aggregated evaluation metrics.
@@ -153,7 +212,7 @@ def run_evaluation_episodes(
         first_response_step = None
 
         for step in range(1, max_steps + 1):
-            action = agent.select_action(state, greedy=greedy)
+            action = select_agent_action(agent, state, agent_type)
             next_state, reward, terminated, truncated, step_info = env.step(action)
 
             ep_reward += reward
@@ -271,7 +330,7 @@ def run_static_baseline(
     all_rewards = []
 
     for ep in range(num_episodes):
-        ep_seed = seed + ep + 10000  # Different seed offset from DQN
+        ep_seed = seed + ep + 10000  # Different seed offset
 
         attack_config = MixedScenarioConfig(
             scenario_type=scenario_type,
@@ -323,6 +382,7 @@ def generate_charts(
     results: Dict[str, Dict[str, Any]],
     baseline_results: Dict[str, Dict[str, Any]],
     charts_dir: str,
+    agent_name: str = "DQN",
 ) -> None:
     """Generate publication-quality evaluation charts.
 
@@ -330,6 +390,7 @@ def generate_charts(
         results: Per-scenario evaluation results.
         baseline_results: Static baseline results for comparison.
         charts_dir: Output directory for charts.
+        agent_name: Agent display name for chart titles (e.g. "DQN", "PPO").
     """
     from src.utils.visualization import _save_figure, _ensure_output_dir
     import matplotlib
@@ -337,16 +398,15 @@ def generate_charts(
     import matplotlib.pyplot as plt
 
     _ensure_output_dir(charts_dir)
+    prefix = agent_name.lower()
 
     # --- 1. Detection Rate by Attack Type ---
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     attack_types = ["DDoS", "Port Scan", "Spoofing", "Overall"]
-    dqn_rates = []
-    thresholds_min = []
 
     # Get rates from the mixed scenario (most comprehensive)
     mixed = results.get("mixed", {})
-    dqn_rates = [
+    agent_rates = [
         mixed.get("detection_rate_ddos", 0) * 100,
         mixed.get("detection_rate_portscan", 0) * 100,
         mixed.get("detection_rate_spoofing", 0) * 100,
@@ -357,24 +417,25 @@ def generate_charts(
     x = np.arange(len(attack_types))
     width = 0.35
 
-    bars1 = ax.bar(x - width / 2, dqn_rates, width, label="DQN Agent",
-                    color="#2196F3", edgecolor="black", alpha=0.85)
+    color = "#4CAF50" if agent_name == "PPO" else "#2196F3"
+    bars1 = ax.bar(x - width / 2, agent_rates, width, label=f"{agent_name} Agent",
+                    color=color, edgecolor="black", alpha=0.85)
     bars2 = ax.bar(x + width / 2, thresholds_min, width, label="Min. Threshold",
                     color="#FF9800", edgecolor="black", alpha=0.6)
 
-    for bar, val in zip(bars1, dqn_rates):
+    for bar, val in zip(bars1, agent_rates):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
                 f"{val:.1f}%", ha="center", va="bottom", fontsize=10)
 
     ax.set_xlabel("Attack Type")
     ax.set_ylabel("Detection Rate (%)")
-    ax.set_title("DQN Detection Rate by Attack Type", fontweight="bold")
+    ax.set_title(f"{agent_name} Detection Rate by Attack Type", fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(attack_types)
     ax.set_ylim(0, 110)
     ax.legend()
     ax.grid(True, axis="y", alpha=0.3)
-    _save_figure(fig, "dqn_detection_by_type", charts_dir)
+    _save_figure(fig, f"{prefix}_detection_by_type", charts_dir)
 
     # --- 2. Confusion Matrix Heatmap ---
     cm = mixed.get("confusion_matrix", {"tp": 0, "fn": 0, "fp": 0, "tn": 0})
@@ -397,17 +458,16 @@ def generate_charts(
                     fontsize=16, fontweight="bold",
                     color="white" if cm_array[i, j] > cm_array.max() / 2 else "black")
 
-    ax.set_title("DQN Confusion Matrix (Mixed Scenario)", fontweight="bold")
+    ax.set_title(f"{agent_name} Confusion Matrix (Mixed Scenario)", fontweight="bold")
     fig.colorbar(im, ax=ax, shrink=0.8)
-    _save_figure(fig, "dqn_confusion_matrix", charts_dir)
+    _save_figure(fig, f"{prefix}_confusion_matrix", charts_dir)
 
-    # --- 3. DQN vs Static Baseline ---
+    # --- 3. Agent vs Static Baseline ---
     if baseline_results:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-        # Detection rate comparison
         baseline_mixed = baseline_results.get("mixed", {})
-        methods = ["DQN Agent", "Static Baseline"]
+        methods = [f"{agent_name} Agent", "Static Baseline"]
         det_rates = [
             mixed.get("detection_rate_overall", 0) * 100,
             baseline_mixed.get("detection_rate_overall", 0) * 100,
@@ -417,7 +477,7 @@ def generate_charts(
             baseline_mixed.get("false_positive_rate", 0) * 100,
         ]
 
-        colors = ["#2196F3", "#9E9E9E"]
+        colors = [color, "#9E9E9E"]
 
         bars = axes[0].bar(methods, det_rates, color=colors, edgecolor="black", alpha=0.85)
         for bar, val in zip(bars, det_rates):
@@ -442,7 +502,7 @@ def generate_charts(
         axes[1].grid(True, axis="y", alpha=0.3)
 
         plt.tight_layout()
-        _save_figure(fig, "dqn_vs_static_baseline", charts_dir)
+        _save_figure(fig, f"{prefix}_vs_static_baseline", charts_dir)
 
     logger.info("Evaluation charts saved to %s", charts_dir)
 
@@ -451,29 +511,45 @@ def evaluate(args: argparse.Namespace) -> None:
     """Run the full evaluation pipeline."""
     setup_logging(level=args.log_level)
 
-    dqn_config = get_hyperparameters("dqn")
-    reward_config = get_reward_config("dqn")
-    seed = dqn_config.get("seed", 42)
+    agent_type = args.agent
+    defaults = AGENT_DEFAULTS[agent_type]
+    agent_name = agent_type.upper()
+
+    config = get_hyperparameters(defaults["config_key"])
+    reward_config = get_reward_config(defaults["config_key"])
+    seed = config.get("seed", 42)
 
     logger.info("=" * 60)
-    logger.info("DQN Evaluation -- RL-Driven Adaptive Security System")
+    logger.info("%s Evaluation -- RL-Driven Adaptive Security System", agent_name)
     logger.info("=" * 60)
-    logger.info("Episodes per scenario: %d | Steps/episode: %d",
-                args.episodes, args.max_steps)
+    logger.info("Agent: %s | Episodes per scenario: %d | Steps/episode: %d",
+                agent_name, args.episodes, args.max_steps)
 
     # Load trained agent
-    agent = DQNAgent(state_dim=65, config=dqn_config)
-
-    checkpoint_path = args.checkpoint
-    if os.path.isdir(checkpoint_path):
-        agent.load(checkpoint_path)
-    elif os.path.isfile(checkpoint_path):
-        agent.load(os.path.dirname(checkpoint_path))
-    else:
-        logger.warning(
-            "No checkpoint found at %s. Using untrained agent for evaluation.",
-            checkpoint_path,
-        )
+    if agent_type == "dqn":
+        agent = DQNAgent(state_dim=65, config=config)
+        checkpoint_path = args.checkpoint
+        if os.path.isdir(checkpoint_path):
+            agent.load(checkpoint_path)
+        elif os.path.isfile(checkpoint_path):
+            agent.load(os.path.dirname(checkpoint_path))
+        else:
+            logger.warning(
+                "No checkpoint found at %s. Using untrained agent.",
+                checkpoint_path,
+            )
+    elif agent_type == "ppo":
+        agent = PPOAgent(state_dim=65, config=config)
+        checkpoint_path = args.checkpoint
+        if os.path.isdir(checkpoint_path):
+            agent.load(checkpoint_path)
+        elif os.path.isfile(checkpoint_path):
+            agent.load(os.path.dirname(checkpoint_path))
+        else:
+            logger.warning(
+                "No checkpoint found at %s. Using untrained agent.",
+                checkpoint_path,
+            )
 
     # Run evaluation for each scenario
     results = {}
@@ -485,12 +561,12 @@ def evaluate(args: argparse.Namespace) -> None:
 
         result = run_evaluation_episodes(
             agent=agent,
+            agent_type=agent_type,
             scenario_type=scenario_type,
             num_episodes=args.episodes,
             max_steps=args.max_steps,
             reward_config=reward_config,
             seed=seed,
-            greedy=True,
         )
         results[scenario_name] = result
 
@@ -570,11 +646,11 @@ def evaluate(args: argparse.Namespace) -> None:
     logger.info("Results saved to: %s", csv_path)
 
     # Generate charts
-    generate_charts(results, baseline_results, args.charts_dir)
+    generate_charts(results, baseline_results, args.charts_dir, agent_name)
 
     # Print summary table
     logger.info("=" * 60)
-    logger.info("EVALUATION SUMMARY")
+    logger.info("%s EVALUATION SUMMARY", agent_name)
     logger.info("=" * 60)
     logger.info("%-15s %-10s %-10s %-10s %-10s %-8s",
                 "Scenario", "Det.Rate", "FP Rate", "Adapt.Spd", "Reward", "Status")

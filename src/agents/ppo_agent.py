@@ -1,6 +1,6 @@
 """Proximal Policy Optimization (PPO) agent for the adaptive security system.
 
-Implements the PPO-Clip algorithm (Schulman et al. 2017) with:
+Implements the PPO-Clip algorithm with:
     - Actor-critic architecture with shared feature layers.
     - Continuous action space (rate limit intensity, rerouting weight,
       priority adjustment) via diagonal Gaussian policy.

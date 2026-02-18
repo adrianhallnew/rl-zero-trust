@@ -59,6 +59,16 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
+      - openziti-data:/openziti:ro
+    environment:
+      - OPENZITI_ENABLED=true
+      - OPENZITI_IDENTITY=/openziti/identities/ryu-controller.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/stats/switches"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -85,9 +95,12 @@ services:
       - ./src:/app/src
       - ./config:/app/config:ro
       - ./captures:/app/captures
+      - openziti-data:/openziti:ro
     environment:
       - RYU_CONTROLLER_IP=172.20.0.20
       - RYU_CONTROLLER_PORT=6633
+      - OPENZITI_ENABLED=true
+      - OPENZITI_IDENTITY=/openziti/identities/mininet-monitor.json
     deploy:
       resources:
         limits:
@@ -116,10 +129,13 @@ services:
       - ./results:/app/results
       - ./checkpoints:/app/checkpoints
       - ./notebooks:/app/notebooks
+      - openziti-data:/openziti:ro
     environment:
       - RYU_API_URL=http://172.20.0.20:8080
       - PYTHONPATH=/app
       - TF_CPP_MIN_LOG_LEVEL=2
+      - OPENZITI_ENABLED=true
+      - OPENZITI_IDENTITY=/openziti/identities/rl-agent.json
     deploy:
       resources:
         limits:

@@ -500,6 +500,203 @@ def plot_reward_components(
     return _save_figure(fig, filename, output_dir)
 
 
+def plot_comparative_detection(
+    dqn_rates: Dict[str, float],
+    ppo_rates: Dict[str, float],
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot side-by-side DQN vs PPO detection rates per attack type.
+
+    Args:
+        dqn_rates: Dict with keys 'ddos', 'port_scan', 'spoofing', 'overall'
+            and values as detection rates (0-1 scale).
+        ppo_rates: Same structure for PPO.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(12, 7))
+
+    attack_types = ["DDoS", "Port Scan", "Spoofing", "Overall"]
+    dqn_vals = [
+        dqn_rates.get("ddos", 0) * 100,
+        dqn_rates.get("port_scan", 0) * 100,
+        dqn_rates.get("spoofing", 0) * 100,
+        dqn_rates.get("overall", 0) * 100,
+    ]
+    ppo_vals = [
+        ppo_rates.get("ddos", 0) * 100,
+        ppo_rates.get("port_scan", 0) * 100,
+        ppo_rates.get("spoofing", 0) * 100,
+        ppo_rates.get("overall", 0) * 100,
+    ]
+    thresholds_min = [75, 70, 65, 70]
+
+    x = np.arange(len(attack_types))
+    width = 0.25
+
+    bars_dqn = ax.bar(x - width, dqn_vals, width, label="DQN",
+                       color="#2196F3", edgecolor="black", alpha=0.85)
+    bars_ppo = ax.bar(x, ppo_vals, width, label="PPO",
+                       color="#4CAF50", edgecolor="black", alpha=0.85)
+    bars_thr = ax.bar(x + width, thresholds_min, width, label="Min. Threshold",
+                       color="#FF9800", edgecolor="black", alpha=0.5)
+
+    for bars, vals in [(bars_dqn, dqn_vals), (bars_ppo, ppo_vals)]:
+        for bar, val in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                    f"{val:.1f}%", ha="center", va="bottom", fontsize=9)
+
+    ax.set_xlabel("Attack Type")
+    ax.set_ylabel("Detection Rate (%)")
+    ax.set_title("DQN vs PPO Detection Rate by Attack Type", fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(attack_types)
+    ax.set_ylim(0, 110)
+    ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
+
+    return _save_figure(fig, "comparative_detection_rates", output_dir)
+
+
+def plot_comparative_learning_curves(
+    dqn_rewards: np.ndarray,
+    ppo_rewards: np.ndarray,
+    window: int = 20,
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot overlaid DQN and PPO training reward curves.
+
+    Args:
+        dqn_rewards: Array of per-episode rewards from DQN training.
+        ppo_rewards: Array of per-episode rewards from PPO training.
+        window: Moving average window size.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+
+    # DQN curve
+    dqn_eps = range(1, len(dqn_rewards) + 1)
+    ax.plot(dqn_eps, dqn_rewards, alpha=0.15, color="#2196F3")
+    if len(dqn_rewards) >= window:
+        dqn_ma = np.convolve(dqn_rewards, np.ones(window) / window, mode="valid")
+        ax.plot(range(window, len(dqn_rewards) + 1), dqn_ma,
+                color="#2196F3", linewidth=2.5, label=f"DQN ({window}-ep avg)")
+
+    # PPO curve
+    ppo_eps = range(1, len(ppo_rewards) + 1)
+    ax.plot(ppo_eps, ppo_rewards, alpha=0.15, color="#4CAF50")
+    if len(ppo_rewards) >= window:
+        ppo_ma = np.convolve(ppo_rewards, np.ones(window) / window, mode="valid")
+        ax.plot(range(window, len(ppo_rewards) + 1), ppo_ma,
+                color="#4CAF50", linewidth=2.5, label=f"PPO ({window}-ep avg)")
+
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Total Reward")
+    ax.set_title("DQN vs PPO Training Reward Curves", fontweight="bold")
+    ax.legend(fontsize=12)
+    ax.grid(True, alpha=0.3)
+
+    return _save_figure(fig, "comparative_learning_curves", output_dir)
+
+
+def plot_comparative_summary(
+    dqn_metrics: Dict[str, float],
+    ppo_metrics: Dict[str, float],
+    output_dir: Optional[str] = None,
+) -> str:
+    """Plot multi-metric comparison bar chart with winner annotations.
+
+    Compares 6 key metrics: Detection Rate, False Positive Score,
+    Adaptation Speed Score, Throughput Score, Latency Score, Avg Reward.
+    All normalised to 0-100 scale for visual comparability.
+
+    Args:
+        dqn_metrics: Dict with keys: detection_rate_overall, false_positive_rate,
+            adaptation_speed_s, throughput_degradation_pct, latency_overhead_ms,
+            avg_reward.
+        ppo_metrics: Same keys for PPO.
+        output_dir: Output directory.
+
+    Returns:
+        Path to saved PNG file.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+
+    # Normalise all metrics to 0-100 (higher is better)
+    metric_labels = [
+        "Detection\nRate",
+        "FP Score\n(100-FPR)",
+        "Adaptation\nSpeed Score",
+        "Throughput\nScore",
+        "Latency\nScore",
+        "Avg Reward\n(scaled)",
+    ]
+
+    def _norm_scores(m: Dict[str, float]) -> List[float]:
+        return [
+            m.get("detection_rate_overall", 0) * 100,
+            (1.0 - m.get("false_positive_rate", 0)) * 100,
+            max(0, 100 - m.get("adaptation_speed_s", 30) * 3.33),
+            max(0, 100 - m.get("throughput_degradation_pct", 25) * 4),
+            max(0, 100 - m.get("latency_overhead_ms", 50) * 2),
+            min(100, m.get("avg_reward", 0)),
+        ]
+
+    dqn_scores = _norm_scores(dqn_metrics)
+    ppo_scores = _norm_scores(ppo_metrics)
+
+    x = np.arange(len(metric_labels))
+    width = 0.35
+
+    bars_dqn = ax.bar(x - width / 2, dqn_scores, width, label="DQN",
+                       color="#2196F3", edgecolor="black", alpha=0.85)
+    bars_ppo = ax.bar(x + width / 2, ppo_scores, width, label="PPO",
+                       color="#4CAF50", edgecolor="black", alpha=0.85)
+
+    # Annotate values and winners
+    ppo_wins = 0
+    for i, (d_val, p_val) in enumerate(zip(dqn_scores, ppo_scores)):
+        ax.text(x[i] - width / 2, d_val + 1, f"{d_val:.1f}",
+                ha="center", va="bottom", fontsize=8)
+        ax.text(x[i] + width / 2, p_val + 1, f"{p_val:.1f}",
+                ha="center", va="bottom", fontsize=8)
+
+        # Mark winner with a star
+        if p_val >= d_val:
+            ppo_wins += 1
+            ax.text(x[i] + width / 2, p_val + 5, "*",
+                    ha="center", va="bottom", fontsize=14, color="#4CAF50",
+                    fontweight="bold")
+        else:
+            ax.text(x[i] - width / 2, d_val + 5, "*",
+                    ha="center", va="bottom", fontsize=14, color="#2196F3",
+                    fontweight="bold")
+
+    meets_threshold = ppo_wins >= 3
+    status = "PASS" if meets_threshold else "FAIL"
+    ax.set_title(
+        f"DQN vs PPO Comparative Summary\n"
+        f"PPO wins {ppo_wins}/6 key metrics [{status}] "
+        f"(requirement: >= 3/6)",
+        fontweight="bold",
+    )
+
+    ax.set_xlabel("Metric (normalised to 0-100, higher is better)")
+    ax.set_ylabel("Score")
+    ax.set_xticks(x)
+    ax.set_xticklabels(metric_labels, fontsize=9)
+    ax.set_ylim(0, 115)
+    ax.legend(fontsize=11)
+    ax.grid(True, axis="y", alpha=0.3)
+
+    return _save_figure(fig, "comparative_summary", output_dir)
+
+
 if __name__ == "__main__":
     # Generate topology visualization as a standalone script
     logging.basicConfig(level=logging.INFO)
