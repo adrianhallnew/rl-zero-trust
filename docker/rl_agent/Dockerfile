@@ -1,8 +1,8 @@
 # RL Agent Container
-# Base: Python 3.10 (TensorFlow 2.15 compatible)
+# Base: Python 3.11 (TensorFlow 2.20.0 + Keras 3.13.2 compatible)
 # Purpose: DQN and PPO neural network training for adaptive security policies
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 LABEL maintainer="Adrian David Justin Hall (TP075220)"
 LABEL description="Reinforcement learning agent for adaptive zero-trust security policies"
