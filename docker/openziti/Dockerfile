@@ -10,8 +10,8 @@ LABEL description="OpenZiti zero-trust overlay network controller"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ZITI_HOME=/openziti
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies and apply OS-level security patches
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     jq \
     ca-certificates \

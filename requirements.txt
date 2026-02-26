@@ -17,13 +17,18 @@ pandas==2.2.3
 matplotlib==3.7.1
 
 # --- HTTP / Networking ---
-requests==2.29.0
+requests>=2.32.3
 
 # --- Config ---
 PyYAML==6.0.2
 
 # --- Zero Trust ---
 openziti
+
+# --- Security overrides (pin vulnerable transitive deps) ---
+pillow>=10.4.0
+h11>=0.16.0
+django>=5.1.14
 
 # --- Testing ---
 pytest==7.3.1

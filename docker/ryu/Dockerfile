@@ -9,8 +9,8 @@ LABEL description="Ryu SDN controller for OpenFlow-based policy enforcement"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies and apply OS-level security patches
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     gcc \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir "setuptools==57.5.0" "wheel" && \
     ryu==4.34 \
     eventlet==0.30.2 \
     PyYAML==6.0.1 \
-    requests==2.31.0
+    requests==2.32.3 && \
+    pip install --no-cache-dir --upgrade setuptools
 
 WORKDIR /app
 

@@ -9,8 +9,8 @@ LABEL description="Mininet SDN simulation environment for RL-driven zero-trust s
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Mininet, Open vSwitch, and network tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install Mininet, Open vSwitch, and network tools; apply OS-level security patches
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     mininet \
     openvswitch-switch \
     openvswitch-common \
@@ -28,8 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies for attack simulation and traffic generation
 RUN pip3 install --no-cache-dir \
-    scapy==2.5.0 \
-    requests==2.31.0 \
+    scapy==2.7.0 \
+    requests==2.32.3 \
     PyYAML==6.0.1
 
 WORKDIR /app
