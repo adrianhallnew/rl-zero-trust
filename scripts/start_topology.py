@@ -10,8 +10,6 @@ Responsibilities:
     4. Launch iPerf3 baseline traffic between host pairs to populate flow tables
     5. Log TOPOLOGY_READY when Ryu sees all 5 switches
     6. Keep running (Mininet must stay alive for the demo)
-
-Sprint 8 deliverable.
 """
 
 import logging
