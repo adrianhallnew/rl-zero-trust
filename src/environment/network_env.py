@@ -555,24 +555,63 @@ class NetworkSecurityEnv(gym.Env):
             "policy_changes": policy_changes,
         }
 
+    def set_attack_state(
+        self, active: bool, attack_type: Optional[str] = None,
+    ) -> None:
+        """Set external attack ground truth for live-mode hybrid metrics.
+
+        Called by the demo orchestrator so the reward model knows whether
+        an attack is currently active (ground truth from the attack
+        scheduler, not inferred from stats).
+
+        Args:
+            active: Whether an attack is currently firing.
+            attack_type: Attack label, e.g. ``"ddos"``, ``"port_scan"``.
+        """
+        self._sim_attack_active = active
+        self._sim_attack_type = attack_type if active else None
+
     def _compute_live_metrics(self, action: int) -> Dict[str, Any]:
         """Compute metrics from live network observations.
 
-        In live mode, detection metrics come from comparing the
-        policy enforcer's actions against known attack ground truth.
+        Uses a hybrid approach: the attack scheduler provides ground-truth
+        attack state, which is compared against the agent's action to
+        generate TP/FP/TN/FN counts.  Throughput and latency use
+        defaults (real port-stat deltas are noisy at 1 Hz polling).
         """
         policy_changes = 0
         if self.policy_enforcer is not None:
             policy_changes = self.policy_enforcer.get_policy_changes()
 
+        attack = self._sim_attack_active
+        tp, fn, fp, tn = 0, 0, 0, 0
+
+        if attack:
+            if action in (1, 3):   # BLOCK or RATE_LIMIT
+                tp, fn, fp, tn = 9, 1, 0, 90
+            elif action == 2:      # REROUTE
+                tp, fn, fp, tn = 6, 4, 0, 90
+            else:                  # ALLOW — missed detection
+                tp, fn, fp, tn = 0, 10, 0, 90
+        else:
+            if action in (1, 3):   # Blocking with no attack → FP
+                tp, fn, fp, tn = 0, 0, 5, 85
+            elif action == 2:
+                tp, fn, fp, tn = 0, 0, 2, 88
+            else:                  # ALLOW during peace — ideal
+                tp, fn, fp, tn = 0, 0, 0, 90
+
+        throughput = 50.0 if attack else DEFAULT_BASELINE_THROUGHPUT
+        latency = 25.0 if attack else 5.0
+
         return {
-            "true_positives": 0,
-            "false_negatives": 0,
-            "false_positives": 0,
-            "true_negatives": 90,
-            "current_throughput_mbps": DEFAULT_BASELINE_THROUGHPUT,
+            "true_positives": tp,
+            "false_negatives": fn,
+            "false_positives": fp,
+            "true_negatives": tn,
+            "current_throughput_mbps": throughput,
             "baseline_throughput_mbps": DEFAULT_BASELINE_THROUGHPUT,
             "min_throughput_mbps": DEFAULT_MIN_THROUGHPUT,
-            "current_latency_ms": 5.0,
+            "current_latency_ms": latency,
             "policy_changes": policy_changes,
         }
