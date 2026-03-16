@@ -287,3 +287,79 @@ class PortScanAttack:
             len(packets), self.config.scan_type, ports[0], ports[-1],
         )
         return packets
+
+    def run_live(self, duration: int = 20) -> None:
+        """Send live port scan traffic for *duration* seconds.
+
+        Iterates through the configured port range, sending probe
+        packets in batches.  Designed to be called from the CLI entry
+        point inside the Mininet container.
+
+        Args:
+            duration: How many seconds to sustain the scan.
+        """
+        from scapy.all import send
+
+        delay = self.profile["delay_between_probes_ms"] / 1000.0
+        self.start()
+        logger.info(
+            "Live PortScan: type=%s, speed=%s, duration=%ds, ports=%s-%s",
+            self.config.scan_type, self.config.speed, duration,
+            self.config.port_range[0], self.config.port_range[1],
+        )
+
+        deadline = time.time() + duration
+        sent = 0
+        while time.time() < deadline:
+            packets = self.generate_live_packets(num_ports=20)
+            if packets is None:
+                logger.error("Scapy unavailable — aborting live scan")
+                break
+            for pkt in packets:
+                send(pkt, verbose=False)
+                sent += 1
+            self._steps_elapsed += 1
+            time.sleep(delay)
+
+        self.stop()
+        logger.info("Live PortScan finished — %d probes sent in %ds", sent, duration)
+
+
+# ------------------------------------------------------------------
+# CLI entry point
+# Usage: docker exec mininet python3 /app/src/attacks/port_scan.py --live
+# ------------------------------------------------------------------
+
+INTENSITY_TO_SPEED = {"low": "slow", "medium": "normal", "high": "aggressive"}
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Port scan attack — live Scapy mode")
+    parser.add_argument("--live", action="store_true", required=True,
+                        help="Run in live mode (send real packets)")
+    parser.add_argument("--duration", type=int, default=20,
+                        help="Scan duration in seconds (default: 20)")
+    parser.add_argument("--intensity", choices=["low", "medium", "high"],
+                        default="medium",
+                        help="Scan speed: low=slow, medium=normal, high=aggressive (default: medium)")
+    parser.add_argument("--type", choices=["tcp_connect", "syn_scan"],
+                        default="tcp_connect", dest="scan_type",
+                        help="Scan variant (default: tcp_connect)")
+    parser.add_argument("--target", default="10.0.0.1",
+                        help="Target IP (default: 10.0.0.1)")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    config = PortScanConfig(
+        scan_type=args.scan_type,
+        speed=INTENSITY_TO_SPEED[args.intensity],
+        target_ip=args.target,
+    )
+    attack = PortScanAttack(config)
+    attack.run_live(duration=args.duration)

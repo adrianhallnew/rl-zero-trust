@@ -124,12 +124,15 @@ class AttackScheduler:
         # else: no attacks
 
     def _run_auto_schedule(self) -> None:
+        t0 = time.time()
         for start_sec, duration, atype, intensity in self.schedule:
             if self._stop_event.is_set():
                 return
-            # Wait until start_sec relative to schedule start
-            if start_sec > 0:
-                if self._stop_event.wait(timeout=start_sec if not hasattr(self, '_elapsed') else 0):
+            # Wait until the absolute start time relative to schedule start
+            elapsed = time.time() - t0
+            delay = start_sec - elapsed
+            if delay > 0:
+                if self._stop_event.wait(timeout=delay):
                     return
             self._fire_single(atype, duration=duration, intensity=intensity)
             if self._stop_event.is_set():

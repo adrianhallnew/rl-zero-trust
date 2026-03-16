@@ -295,3 +295,77 @@ class SpoofingAttack:
             len(packets), self.config.spoof_type,
         )
         return packets
+
+    def run_live(self, duration: int = 20) -> None:
+        """Send live spoofed traffic for *duration* seconds.
+
+        Continuously generates and sends spoofed Scapy packets.
+        Designed to be called from the CLI entry point inside the
+        Mininet container.
+
+        Args:
+            duration: How many seconds to sustain the attack.
+        """
+        from scapy.all import send, sendp
+
+        self.start()
+        logger.info(
+            "Live Spoofing: type=%s, duration=%ds",
+            self.config.spoof_type, duration,
+        )
+
+        deadline = time.time() + duration
+        sent = 0
+        while time.time() < deadline:
+            packets = self.generate_live_packets()
+            if packets is None:
+                logger.error("Scapy unavailable — aborting live spoofing")
+                break
+            for pkt in packets:
+                # MAC/ARP spoof packets have Ether layer → use sendp (layer 2)
+                if self.config.spoof_type in (SPOOF_MAC, SPOOF_ARP):
+                    sendp(pkt, verbose=False)
+                else:
+                    send(pkt, verbose=False)
+                sent += 1
+            time.sleep(0.1)
+
+        self.stop()
+        logger.info("Live Spoofing finished — %d packets sent in %ds", sent, duration)
+
+
+# ------------------------------------------------------------------
+# CLI entry point
+# Usage: docker exec mininet python3 /app/src/attacks/spoofing.py --live
+# ------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Spoofing attack — live Scapy mode")
+    parser.add_argument("--live", action="store_true", required=True,
+                        help="Run in live mode (send real packets)")
+    parser.add_argument("--duration", type=int, default=20,
+                        help="Attack duration in seconds (default: 20)")
+    parser.add_argument("--intensity", choices=["low", "medium", "high"],
+                        default="medium",
+                        help="Accepted for scheduler compatibility (not used)")
+    parser.add_argument("--type", choices=["ip_spoof", "mac_spoof", "arp_spoof"],
+                        default="ip_spoof", dest="spoof_type",
+                        help="Spoofing variant (default: ip_spoof)")
+    parser.add_argument("--target", default="10.0.0.1",
+                        help="Target IP (default: 10.0.0.1)")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    config = SpoofingConfig(
+        spoof_type=args.spoof_type,
+        target_ip=args.target,
+    )
+    attack = SpoofingAttack(config)
+    attack.run_live(duration=args.duration)

