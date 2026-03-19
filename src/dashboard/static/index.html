@@ -144,7 +144,7 @@
 <!-- ================================================================== -->
 <!-- TAB: LIVE MONITOR                                                  -->
 <!-- ================================================================== -->
-<div id="tab-live" class="tab-content p-4 space-y-4">
+<div id="tab-live" class="tab-panel p-4 space-y-4">
 
   <!-- ── Stats Strip ──────────────────────────────────────────────── -->
   <div class="stats stats-horizontal shadow w-full bg-base-100 text-sm overflow-x-auto">
@@ -191,7 +191,7 @@
         <h3 class="card-title text-sm">
           <i class="fa-solid fa-network-wired mr-1"></i> Network Topology
         </h3>
-        <div id="topology-container" style="width:100%;height:340px;"></div>
+        <div id="topology-container" style="width:100%;height:460px;"></div>
       </div>
     </div>
 
@@ -353,7 +353,7 @@
 <!-- ================================================================== -->
 <!-- TAB: TRAINING RESULTS (Phase C placeholder)                        -->
 <!-- ================================================================== -->
-<div id="tab-training" class="tab-content p-4 hidden">
+<div id="tab-training" class="tab-panel p-4 hidden">
   <div class="flex items-center justify-center h-64 opacity-50">
     <i class="fa-solid fa-chart-line text-4xl mr-3"></i>
     <span class="text-lg">Training Results — Phase C</span>
@@ -363,7 +363,7 @@
 <!-- ================================================================== -->
 <!-- TAB: SYSTEM OVERVIEW (Phase D placeholder)                         -->
 <!-- ================================================================== -->
-<div id="tab-system" class="tab-content p-4 hidden">
+<div id="tab-system" class="tab-panel p-4 hidden">
   <div class="flex items-center justify-center h-64 opacity-50">
     <i class="fa-solid fa-diagram-project text-4xl mr-3"></i>
     <span class="text-lg">System Overview — Phase D</span>
@@ -417,7 +417,7 @@ document.querySelectorAll('[data-tab]').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('[data-tab]').forEach(t => t.classList.remove('tab-active'));
     tab.classList.add('tab-active');
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document.querySelectorAll('.tab-panel').forEach(c => c.classList.add('hidden'));
     document.getElementById('tab-' + tab.dataset.tab).classList.remove('hidden');
   });
 });
@@ -723,153 +723,260 @@ function updatePPOPanel(ev) {
 // =====================================================================
 function initTopology() {
   const container = document.getElementById('topology-container');
-  const width = container.clientWidth || 700;
-  const height = 340;
+  const W = container.clientWidth || 720;
+  const H = 460;
+  const cx = W / 2;
+
+  d3.select('#topology-container svg').remove();
 
   const svg = d3.select('#topology-container')
     .append('svg')
     .attr('width', '100%')
-    .attr('height', height)
-    .attr('viewBox', `0 0 ${width} ${height}`);
+    .attr('height', H)
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .style('background', 'transparent');
 
-  // Define nodes: 5 switches + 15 hosts
-  const switches = [
-    { id: 's1', type: 'switch', x: width / 2,       y: 50 },
-    { id: 's2', type: 'switch', x: width / 3,       y: 140 },
-    { id: 's3', type: 'switch', x: (2 * width) / 3, y: 140 },
-    { id: 's4', type: 'switch', x: width / 5,       y: 230 },
-    { id: 's5', type: 'switch', x: (4 * width) / 5, y: 230 },
+  // ── Defs: glow filters ──────────────────────────────────────────
+  const defs = svg.append('defs');
+
+  function makeGlow(id, color, std) {
+    const f = defs.append('filter').attr('id', id)
+      .attr('x', '-60%').attr('y', '-60%').attr('width', '220%').attr('height', '220%');
+    f.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', std).attr('result', 'blur');
+    f.append('feFlood').attr('flood-color', color).attr('flood-opacity', 0.6).attr('result', 'color');
+    f.append('feComposite').attr('in', 'color').attr('in2', 'blur').attr('operator', 'in').attr('result', 'glow');
+    const m = f.append('feMerge');
+    m.append('feMergeNode').attr('in', 'glow');
+    m.append('feMergeNode').attr('in', 'SourceGraphic');
+  }
+  makeGlow('glow-blue',   '#3b82f6', 4);
+  makeGlow('glow-green',  '#22c55e', 3);
+  makeGlow('glow-red',    '#ef4444', 6);
+  makeGlow('glow-purple', '#a78bfa', 4);
+
+  // Animated dash for OpenFlow link
+  defs.append('style').text(`
+    @keyframes dash-flow { to { stroke-dashoffset: -24; } }
+    .of-link { animation: dash-flow 1.2s linear infinite; }
+    @keyframes node-pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+    .pulse-attack { animation: node-pulse 0.8s ease-in-out infinite; }
+    @keyframes link-flow { to { stroke-dashoffset: -20; } }
+    .trunk-active { animation: link-flow 0.6s linear infinite; }
+  `);
+
+  // ── Node positions ──────────────────────────────────────────────
+  // 3 servers directly on s1
+  const servers = [
+    { id: 'h1', label: 'h1', ip: '10.0.0.1', x: cx - 120, y: 50 },
+    { id: 'h2', label: 'h2', ip: '10.0.0.2', x: cx,       y: 38 },
+    { id: 'h3', label: 'h3', ip: '10.0.0.3', x: cx + 120, y: 50 },
   ];
-
-  // 3 hosts per switch, fanned below each switch
+  // Core switch
+  const s1 = { id: 's1', x: cx, y: 148 };
+  // Ryu SDN controller (right side)
+  const ryuX = W - 72;
+  const ryu  = { id: 'ryu', x: ryuX, y: 148 };
+  // 4 access switches evenly spaced
+  const swY = 280;
+  const swPad = 68;
+  const swTotal = W - swPad * 2;
+  const switches = [
+    { id: 's2', x: swPad + swTotal * 0 / 3, y: swY },
+    { id: 's3', x: swPad + swTotal * 1 / 3, y: swY },
+    { id: 's4', x: swPad + swTotal * 2 / 3, y: swY },
+    { id: 's5', x: swPad + swTotal * 3 / 3, y: swY },
+  ];
+  // Hosts (3 per access switch)
+  const hostY = 395;
+  const hostIPs = [
+    ['10.0.0.4','10.0.0.5','10.0.0.6'],
+    ['10.0.0.7','10.0.0.8','10.0.0.9'],
+    ['10.0.0.10','10.0.0.11','10.0.0.12'],
+    ['10.0.0.13','10.0.0.14','10.0.0.15'],
+  ];
   const hosts = [];
   switches.forEach((sw, si) => {
     for (let h = 0; h < 3; h++) {
-      const idx = si * 3 + h + 1;
-      const offsetX = (h - 1) * 55;
       hosts.push({
-        id: 'h' + idx,
-        type: 'host',
+        id: 'h' + (si * 3 + h + 4),
+        ip: hostIPs[si][h],
         parent: sw.id,
-        x: sw.x + offsetX,
-        y: sw.y + 70,
+        x: sw.x + (h - 1) * 44,
+        y: hostY,
       });
     }
   });
 
-  const nodes = [...switches, ...hosts];
+  // ── Links ───────────────────────────────────────────────────────
+  const serverLinks = servers.map(s => ({ source: s.id,  target: 's1', ltype: 'server' }));
+  const trunkLinks  = switches.map(sw => ({ source: 's1', target: sw.id, ltype: 'trunk' }));
+  const hostLinks   = hosts.map(h => ({ source: h.parent, target: h.id, ltype: 'access' }));
+  const links = [...serverLinks, ...trunkLinks, ...hostLinks];
 
-  // Links: switch-switch + switch-host
-  const switchLinks = [
-    { source: 's1', target: 's2' },
-    { source: 's1', target: 's3' },
-    { source: 's2', target: 's4' },
-    { source: 's3', target: 's5' },
-  ];
-  const hostLinks = hosts.map(h => ({ source: h.parent, target: h.id }));
-  const links = [...switchLinks, ...hostLinks];
+  const nodeById = {};
+  [...servers, s1, ryu, ...switches, ...hosts].forEach(n => { nodeById[n.id] = n; });
 
-  // Draw links
+  // ── OpenFlow dotted link (s1 → Ryu) ────────────────────────────
+  const ofG = svg.append('g');
+  ofG.append('line')
+    .attr('class', 'of-link')
+    .attr('x1', s1.x + 24).attr('y1', s1.y)
+    .attr('x2', ryu.x - 22).attr('y2', ryu.y)
+    .attr('stroke', '#a78bfa').attr('stroke-width', 1.8)
+    .attr('stroke-dasharray', '8 4').attr('opacity', 0.85);
+  ofG.append('text')
+    .attr('x', (s1.x + 24 + ryu.x - 22) / 2).attr('y', s1.y - 10)
+    .attr('text-anchor', 'middle').attr('fill', '#a78bfa')
+    .attr('font-size', '8px').attr('font-family', 'JetBrains Mono').attr('opacity', 0.75)
+    .text('OpenFlow 1.3 / TCP 6633');
+
+  // ── Draw main links ─────────────────────────────────────────────
   const linkGroup = svg.append('g');
   const linkEls = linkGroup.selectAll('line')
-    .data(links)
-    .join('line')
-    .attr('class', 'topo-link')
-    .attr('x1', d => nodes.find(n => n.id === d.source).x)
-    .attr('y1', d => nodes.find(n => n.id === d.source).y)
-    .attr('x2', d => nodes.find(n => n.id === d.target).x)
-    .attr('y2', d => nodes.find(n => n.id === d.target).y)
-    .attr('stroke', '#4b5563')
-    .attr('data-source', d => d.source)
-    .attr('data-target', d => d.target);
+    .data(links).join('line')
+    .attr('class', d => 'topo-link' + (d.ltype === 'trunk' ? ' trunk-link' : ''))
+    .attr('x1', d => nodeById[d.source].x).attr('y1', d => nodeById[d.source].y)
+    .attr('x2', d => nodeById[d.target].x).attr('y2', d => nodeById[d.target].y)
+    .attr('stroke', d => d.ltype === 'server' ? '#22c55e' : d.ltype === 'trunk' ? '#3b82f6' : '#374151')
+    .attr('stroke-width', d => d.ltype === 'trunk' ? 2.5 : d.ltype === 'server' ? 1.8 : 1.2)
+    .attr('opacity', d => d.ltype === 'access' ? 0.45 : 0.8)
+    .attr('data-source', d => d.source).attr('data-target', d => d.target).attr('data-ltype', d => d.ltype);
 
-  // Draw host nodes (circles)
-  const hostGroup = svg.append('g');
-  hostGroup.selectAll('circle')
-    .data(hosts)
-    .join('circle')
-    .attr('cx', d => d.x)
-    .attr('cy', d => d.y)
-    .attr('r', 10)
-    .attr('fill', '#374151')
-    .attr('stroke', '#6b7280')
-    .attr('stroke-width', 1.5)
-    .attr('data-id', d => d.id);
+  // ── Server nodes (h1 h2 h3 on s1) ──────────────────────────────
+  const srvG = svg.append('g');
+  const srvGs = srvG.selectAll('g').data(servers).join('g')
+    .attr('transform', d => `translate(${d.x},${d.y})`);
 
-  // Draw switch nodes (rounded rects as hexagon-like)
-  const switchGroup = svg.append('g');
-  switchGroup.selectAll('rect')
-    .data(switches)
-    .join('rect')
-    .attr('class', 'topo-switch')
-    .attr('x', d => d.x - 18)
-    .attr('y', d => d.y - 18)
-    .attr('width', 36)
-    .attr('height', 36)
-    .attr('rx', 6)
-    .attr('fill', '#1e3a5f')
-    .attr('stroke', '#3b82f6')
-    .attr('stroke-width', 2)
-    .attr('data-id', d => d.id);
+  // Server "rack" shape
+  srvGs.append('rect').attr('x',-13).attr('y',-14).attr('width',26).attr('height',20)
+    .attr('rx',3).attr('fill','#0a1628').attr('stroke','#22c55e').attr('stroke-width',1.5)
+    .style('filter','url(#glow-green)');
+  srvGs.append('rect').attr('x',-13).attr('y', 8).attr('width',26).attr('height',5)
+    .attr('rx',2).attr('fill','#0a1628').attr('stroke','#22c55e').attr('stroke-width',1);
+  // LED dots
+  [-4,2,8].forEach(dx => srvGs.append('circle').attr('cx',dx).attr('cy',-3).attr('r',1.8).attr('fill','#22c55e'));
+  srvGs.append('text').attr('y',24).attr('text-anchor','middle')
+    .attr('fill','#4ade80').attr('font-size','8.5px').attr('font-family','JetBrains Mono').text(d => d.ip);
 
-  // Labels
-  const labelGroup = svg.append('g');
-  labelGroup.selectAll('text')
-    .data(nodes)
-    .join('text')
-    .attr('class', 'topo-label')
-    .attr('x', d => d.x)
-    .attr('y', d => d.type === 'switch' ? d.y + 4 : d.y + 4)
-    .attr('text-anchor', 'middle')
-    .attr('font-family', 'JetBrains Mono')
-    .text(d => d.id);
+  // ── Ryu SDN controller ──────────────────────────────────────────
+  const ryuG = svg.append('g').attr('transform', `translate(${ryu.x},${ryu.y})`);
+  ryuG.append('rect').attr('x',-22).attr('y',-22).attr('width',44).attr('height',44)
+    .attr('rx',8).attr('fill','#130f2a').attr('stroke','#a78bfa').attr('stroke-width',2)
+    .style('filter','url(#glow-purple)');
+  // Concentric circles (controller icon)
+  [12,8,4].forEach((r,i) => {
+    ryuG.append('circle').attr('r',r).attr('fill','none')
+      .attr('stroke','#a78bfa').attr('stroke-width',1).attr('opacity', 0.3 + i * 0.3);
+  });
+  ryuG.append('circle').attr('r',3).attr('fill','#a78bfa');
+  ryuG.append('text').attr('y',30).attr('text-anchor','middle')
+    .attr('fill','#c4b5fd').attr('font-size','8.5px').attr('font-family','JetBrains Mono').attr('font-weight','bold').text('Ryu SDN');
+  ryuG.append('text').attr('y',40).attr('text-anchor','middle')
+    .attr('fill','#7c3aed').attr('font-size','7.5px').attr('font-family','JetBrains Mono').text('172.20.0.20:6633');
 
-  // Store references for updates
-  window._topo = { svg, linkEls, switchGroup, switches, nodes, links };
+  // ── Core switch s1 ──────────────────────────────────────────────
+  const s1G = svg.append('g').attr('id','topo-s1').attr('transform', `translate(${s1.x},${s1.y})`);
+  s1G.append('rect').attr('x',-28).attr('y',-18).attr('width',56).attr('height',36)
+    .attr('rx',7).attr('fill','#071830').attr('stroke','#3b82f6').attr('stroke-width',2.5)
+    .style('filter','url(#glow-blue)');
+  // Switch port lines
+  [-18,-8,2,12].forEach(dx => {
+    s1G.append('rect').attr('x',dx).attr('y',-12).attr('width',6).attr('height',4).attr('rx',1).attr('fill','#3b82f6').attr('opacity',0.7);
+    s1G.append('circle').attr('cx',dx+3).attr('cy',4).attr('r',2).attr('fill','#22c55e');
+  });
+  s1G.append('text').attr('y',28).attr('text-anchor','middle')
+    .attr('fill','#93c5fd').attr('font-size','9.5px').attr('font-family','JetBrains Mono').attr('font-weight','bold').text('Core switch (s1)');
+
+  // ── Access switches s2–s5 ────────────────────────────────────────
+  const swG = svg.append('g');
+  const swGs = swG.selectAll('g').data(switches).join('g')
+    .attr('id', d => 'topo-' + d.id)
+    .attr('transform', d => `translate(${d.x},${d.y})`);
+
+  swGs.append('rect').attr('x',-20).attr('y',-13).attr('width',40).attr('height',26)
+    .attr('rx',5).attr('fill','#071830').attr('stroke','#3b82f6').attr('stroke-width',1.8)
+    .style('filter','url(#glow-blue)');
+  [-8,0,8].forEach(dx => {
+    swGs.append('rect').attr('x',dx-3).attr('y',-8).attr('width',5).attr('height',3).attr('rx',1).attr('fill','#3b82f6').attr('opacity',0.6);
+    swGs.append('circle').attr('cx',dx).attr('cy',4).attr('r',1.5).attr('fill','#22c55e');
+  });
+  swGs.append('text').attr('y',22).attr('text-anchor','middle')
+    .attr('fill','#93c5fd').attr('font-size','8.5px').attr('font-family','JetBrains Mono').text(d => d.id);
+  swGs.append('text').attr('y',32).attr('text-anchor','middle')
+    .attr('fill','#6b7280').attr('font-size','7px').attr('font-family','JetBrains Mono').text('Access');
+
+  // ── Hosts h4–h15 ────────────────────────────────────────────────
+  const hG = svg.append('g');
+  const hostGs = hG.selectAll('g').data(hosts).join('g')
+    .attr('id', d => 'topo-' + d.id)
+    .attr('transform', d => `translate(${d.x},${d.y})`);
+
+  // Monitor icon
+  hostGs.append('rect').attr('x',-11).attr('y',-10).attr('width',22).attr('height',14)
+    .attr('rx',2).attr('fill','#111827').attr('stroke','#374151').attr('stroke-width',1.2);
+  hostGs.append('rect').attr('x',-9).attr('y',-8).attr('width',18).attr('height',10)
+    .attr('rx',1).attr('fill','#0f172a');
+  // Screen glow
+  hostGs.append('rect').attr('x',-7).attr('y',-6).attr('width',14).attr('height',6)
+    .attr('rx',1).attr('fill','#1e3a5f').attr('opacity',0.6);
+  // Stand
+  hostGs.append('rect').attr('x',-3).attr('y', 5).attr('width', 6).attr('height',3).attr('fill','#1f2937');
+  hostGs.append('rect').attr('x',-7).attr('y', 8).attr('width',14).attr('height',1.5).attr('rx',1).attr('fill','#374151');
+  hostGs.append('text').attr('y',20).attr('text-anchor','middle')
+    .attr('fill','#6b7280').attr('font-size','7px').attr('font-family','JetBrains Mono').text(d => d.ip);
+
+  // ── Legend ───────────────────────────────────────────────────────
+  const legG = svg.append('g').attr('transform', `translate(8,${H - 36})`);
+  const legend = [
+    { color: '#22c55e', label: 'Server link' },
+    { color: '#3b82f6', label: 'Trunk link' },
+    { color: '#374151', label: 'Access link' },
+    { color: '#a78bfa', label: 'OpenFlow' },
+  ];
+  legend.forEach((item, i) => {
+    legG.append('line').attr('x1', i * 110).attr('y1', 6).attr('x2', i * 110 + 18).attr('y2', 6)
+      .attr('stroke', item.color).attr('stroke-width', 2);
+    legG.append('text').attr('x', i * 110 + 22).attr('y', 10)
+      .attr('fill', '#6b7280').attr('font-size', '8px').attr('font-family', 'JetBrains Mono').text(item.label);
+  });
+
+  window._topo = { svg, linkEls, s1G, swGs, hostGs, srvGs, switches, hosts, servers, s1, links, nodeById };
 }
 
 function updateTopology(ev) {
   if (!window._topo) return;
-  const { linkEls, switchGroup, switches } = window._topo;
+  const { linkEls, s1G, swGs } = window._topo;
   const isAttack = ev.attack_active;
   const actionId = ev.action;
 
-  // Reset all links
+  // Reset links
   linkEls
-    .attr('stroke', '#4b5563')
-    .classed('blocked', false)
-    .classed('pulse-attack', false);
+    .attr('stroke', d => d.ltype === 'server' ? '#22c55e' : d.ltype === 'trunk' ? '#3b82f6' : '#374151')
+    .attr('stroke-width', d => d.ltype === 'trunk' ? 2.5 : d.ltype === 'server' ? 1.8 : 1.2)
+    .attr('opacity', d => d.ltype === 'access' ? 0.45 : 0.8)
+    .classed('blocked', false).classed('trunk-active', false);
 
-  // Reset switch colors
-  switchGroup.selectAll('rect')
-    .attr('fill', '#1e3a5f')
-    .attr('stroke', '#3b82f6')
-    .classed('pulse-attack', false);
+  // Reset s1
+  s1G.select('rect')
+    .attr('stroke', '#3b82f6').attr('fill', '#071830')
+    .style('filter', 'url(#glow-blue)').classed('pulse-attack', false);
+
+  // Reset access switches
+  swGs.select('rect')
+    .attr('stroke', '#3b82f6').attr('fill', '#071830')
+    .style('filter', 'url(#glow-blue)').classed('pulse-attack', false);
 
   if (isAttack) {
-    // Highlight s1 (core) and s2 under attack
-    switchGroup.selectAll('rect')
-      .filter(d => d.id === 's1' || d.id === 's2')
-      .attr('fill', '#7f1d1d')
-      .attr('stroke', '#ef4444')
-      .classed('pulse-attack', true);
+    const actionColor = actionId === 1 ? '#ef4444' : actionId === 3 ? '#f59e0b' : actionId === 2 ? '#60a5fa' : '#ef4444';
 
-    // Highlight links from s1, s2
-    linkEls
-      .filter(d => d.source === 's1' || d.source === 's2' || d.target === 's1' || d.target === 's2')
-      .attr('stroke', () => {
-        if (actionId === 1) return '#ef4444';      // BLOCK
-        if (actionId === 3) return '#f59e0b';       // RATE_LIMIT
-        if (actionId === 2) return '#3b82f6';       // REROUTE
-        return '#ef4444';
-      })
+    s1G.select('rect')
+      .attr('stroke', '#ef4444').attr('fill', '#1a0505')
+      .style('filter', 'url(#glow-red)').classed('pulse-attack', true);
+
+    linkEls.filter(d => d.ltype === 'trunk')
+      .attr('stroke', actionColor).attr('stroke-width', 3).attr('opacity', 1)
       .classed('blocked', actionId === 1)
-      .classed('pulse-attack', actionId === 0);
-  } else {
-    // Normal: green links for s1
-    linkEls
-      .filter(d => d.source === 's1' || d.target === 's1')
-      .attr('stroke', '#22c55e');
+      .classed('trunk-active', actionId !== 1);
   }
 }
 
