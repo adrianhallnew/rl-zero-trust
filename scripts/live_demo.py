@@ -483,9 +483,167 @@ def main() -> None:
             scheduler.stop()
             logger.info("Demo finished")
     else:
-        # Sprint 11: dashboard mode (placeholder)
-        print("Dashboard mode not yet implemented — use --no-dashboard")
-        sys.exit(1)
+        # Sprint 11: dashboard mode
+        _run_with_dashboard(args)
+
+
+def _run_with_dashboard(args: argparse.Namespace) -> None:
+    """Launch FastAPI dashboard server with the RL loop in a background thread."""
+    import threading
+
+    import uvicorn
+
+    from src.dashboard.server import app, state
+
+    state.agent = args.agent
+    state.mode = "live"
+    state.start_time = time.time()
+
+    # Scheduler — created once, can be replaced on agent switch
+    scheduler = AttackScheduler(scenario=args.scenario)
+
+    # Flag to signal the RL thread to stop
+    loop_stop = threading.Event()
+
+    def _rl_thread():
+        """Run the RL loop, checking for control signals each step."""
+        nonlocal scheduler
+
+        current_agent = args.agent
+        current_mode = state.mode
+
+        while not loop_stop.is_set():
+            # Wait for start signal (or start immediately if already requested)
+            if not state.running:
+                if state.requested_start:
+                    state.requested_start = False
+                    state.running = True
+                    state.start_time = time.time()
+                    state.step = 0
+                    state.events.clear()
+                else:
+                    time.sleep(0.2)
+                    continue
+
+            # Check for agent switch request
+            if state.requested_agent and state.requested_agent != current_agent:
+                current_agent = state.requested_agent
+                state.requested_agent = None
+                state.agent = current_agent
+                state.step = 0
+                state.publish_sync({
+                    "type": "agent_switch",
+                    "agent": current_agent,
+                    "timestamp": time.time(),
+                })
+                logger.info("Agent switched to %s", current_agent)
+
+            # Check for mode switch request
+            if state.requested_mode and state.requested_mode != current_mode:
+                current_mode = state.requested_mode
+                state.requested_mode = None
+                state.mode = current_mode
+                state.publish_sync({
+                    "type": "mode_switch",
+                    "mode": current_mode,
+                    "timestamp": time.time(),
+                })
+                logger.info("Mode switched to %s", current_mode)
+
+            # Check for manual attack trigger
+            if state.requested_attack:
+                attack_type = state.requested_attack
+                intensity_val = state.requested_attack_intensity
+                state.requested_attack = None
+                intensity_map = {0.3: "low", 0.7: "medium", 1.0: "high"}
+                closest = min(intensity_map.keys(), key=lambda x: abs(x - intensity_val))
+                scheduler._fire_single(attack_type, duration=30, intensity=intensity_map[closest])
+
+            # Check for stop attacks
+            if state.requested_stop_attacks:
+                state.requested_stop_attacks = False
+                scheduler.attack_active = False
+                scheduler.attack_type = None
+                for proc in scheduler._processes:
+                    try:
+                        proc.terminate()
+                    except OSError:
+                        pass
+                scheduler._processes.clear()
+                state.publish_sync({
+                    "type": "attack_stop",
+                    "attack_type": "all",
+                    "timestamp": time.time(),
+                })
+
+            # Check for auto scenario
+            if state.requested_auto_scenario:
+                state.requested_auto_scenario = False
+                scheduler.stop()
+                scheduler = AttackScheduler(scenario="auto")
+                scheduler.start()
+
+            # Check for stop request
+            if state.requested_stop:
+                state.requested_stop = False
+                state.running = False
+                scheduler.stop()
+                continue
+
+            # Run the actual RL loop
+            scheduler_for_loop = scheduler
+            if not scheduler_for_loop._thread and args.scenario != "none":
+                scheduler_for_loop.start()
+
+            try:
+                run_rl_loop(
+                    agent_name=current_agent,
+                    max_steps=args.steps,
+                    step_interval=args.step_interval,
+                    attack_scheduler=scheduler_for_loop,
+                    event_callback=_dashboard_callback,
+                )
+            except Exception:
+                logger.exception("RL loop error")
+            finally:
+                scheduler_for_loop.stop()
+                state.running = False
+
+    def _dashboard_callback(event: dict):
+        """Called by run_rl_loop for each step — publish to SSE subscribers."""
+        state.step = event.get("step", state.step)
+        state.publish_sync(event)
+
+        # Check if a stop was requested mid-loop
+        if state.requested_stop or loop_stop.is_set():
+            raise KeyboardInterrupt("Dashboard requested stop")
+
+        # Check if agent switch was requested — break out of current loop
+        if state.requested_agent and state.requested_agent != state.agent:
+            raise KeyboardInterrupt("Agent switch requested")
+
+    # Start RL thread
+    rl_thread = threading.Thread(target=_rl_thread, daemon=True, name="rl-loop")
+    rl_thread.start()
+
+    # Auto-start if a scenario is specified
+    if args.scenario != "none":
+        state.requested_start = True
+
+    print(f"\n{'='*70}")
+    print(f"  RL Zero-Trust Dashboard")
+    print(f"  Open: http://localhost:5000")
+    print(f"  Agent: {args.agent.upper()} | Scenario: {args.scenario}")
+    print(f"{'='*70}\n")
+
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=5000, log_level="warning")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop_stop.set()
+        scheduler.stop()
+        logger.info("Dashboard shutdown complete")
 
 
 if __name__ == "__main__":

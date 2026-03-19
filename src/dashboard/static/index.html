@@ -1,0 +1,27 @@
+<!doctype html>
+<html data-theme="night">
+  <head>
+    <meta charset="UTF-8" />
+    <title>RL Zero-Trust Dashboard</title>
+  </head>
+  <body
+    style="
+      background: #1a1a2e;
+      color: #fff;
+      font-family: monospace;
+      padding: 2rem;
+    "
+  >
+    <h1>Phase A — Backend OK</h1>
+    <p>SSE endpoint: <code>/events</code></p>
+    <p>Status endpoint: <code>/status</code></p>
+    <div id="log"></div>
+    <script>
+      const es = new EventSource("/events");
+      es.onmessage = (e) => {
+        const div = document.getElementById("log");
+        div.innerHTML = "<pre>" + e.data + "</pre>" + div.innerHTML;
+      };
+    </script>
+  </body>
+</html>
