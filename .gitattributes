@@ -13,3 +13,10 @@
 
 # Dockerfiles (no extension)
 Dockerfile  text eol=lf
+
+# GitHub Linguist — language stats
+*.ipynb     linguist-detectable=false
+*.sh        linguist-detectable=true
+*.yaml      linguist-detectable=true
+*.yml       linguist-detectable=true
+Dockerfile  linguist-detectable=true
