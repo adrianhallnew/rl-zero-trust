@@ -351,13 +351,39 @@
 </div><!-- /tab-live -->
 
 <!-- ================================================================== -->
-<!-- TAB: TRAINING RESULTS (Phase C placeholder)                        -->
+<!-- TAB: TRAINING RESULTS (Phase C)                                    -->
 <!-- ================================================================== -->
-<div id="tab-training" class="tab-panel p-4 hidden">
-  <div class="flex items-center justify-center h-64 opacity-50">
-    <i class="fa-solid fa-chart-line text-4xl mr-3"></i>
-    <span class="text-lg">Training Results — Phase C</span>
+<div id="tab-training" class="tab-panel p-4 space-y-4 hidden">
+
+  <!-- ── KPI Summary Table ─────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm mb-3">
+        <i class="fa-solid fa-table mr-1"></i> Experiment Summary (KPIs)
+      </h3>
+      <div id="summary-container" class="overflow-x-auto">
+        <p class="opacity-50 text-sm">Loading summary...</p>
+      </div>
+    </div>
   </div>
+
+  <!-- ── Charts Grid ───────────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="card-title text-sm">
+          <i class="fa-solid fa-chart-line mr-1"></i> Training Charts
+        </h3>
+        <button id="btn-refresh-charts" class="btn btn-sm btn-ghost gap-1">
+          <i class="fa-solid fa-arrows-rotate"></i> Refresh
+        </button>
+      </div>
+      <div id="charts-container">
+        <p class="opacity-50 text-sm">Loading charts...</p>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ================================================================== -->
@@ -1163,6 +1189,156 @@ document.getElementById('btn-export').addEventListener('click', async () => {
 
 // PPO panel visibility
 togglePPOPanel();
+
+// =====================================================================
+// TRAINING RESULTS TAB (Phase C)
+// =====================================================================
+
+async function loadSummary() {
+  const container = document.getElementById('summary-container');
+  try {
+    const resp = await fetch('/summary');
+    const data = await resp.json();
+    if (!data || Object.keys(data).length === 0) {
+      container.innerHTML = '<p class="opacity-50 text-sm">No summary data available. Run training experiments first.</p>';
+      return;
+    }
+
+    let html = '<table class="table table-xs table-zebra"><thead><tr>';
+    html += '<th>Metric</th><th>Value</th>';
+    html += '</tr></thead><tbody>';
+
+    // DQN detection
+    if (data.exp1) {
+      html += `<tr><td>DQN Detection Rate (mean)</td><td class="font-bold text-success">${(data.exp1.dqn_detection_mean * 100).toFixed(2)}%</td></tr>`;
+      html += `<tr><td>Static Baseline Detection</td><td class="opacity-70">${(data.exp1.static_detection * 100).toFixed(2)}%</td></tr>`;
+      html += `<tr><td>DQN Improvement</td><td class="font-bold text-info">+${data.exp1.improvement_pp.toFixed(2)} pp</td></tr>`;
+    }
+    // PPO detection
+    if (data.exp2) {
+      html += `<tr><td>PPO Detection Rate (mean)</td><td class="font-bold text-success">${(data.exp2.ppo_detection_mean * 100).toFixed(2)}%</td></tr>`;
+      html += `<tr><td>PPO Improvement</td><td class="font-bold text-info">+${data.exp2.improvement_pp.toFixed(2)} pp</td></tr>`;
+    }
+    // Head-to-head
+    if (data.exp3 && data.exp3.dqn && data.exp3.dqn.false_positive_rate !== null) {
+      html += `<tr><td>DQN FPR</td><td>${(data.exp3.dqn.false_positive_rate * 100).toFixed(2)}%</td></tr>`;
+      html += `<tr><td>PPO FPR</td><td>${(data.exp3.ppo.false_positive_rate * 100).toFixed(2)}%</td></tr>`;
+    }
+    // Zero-trust overhead
+    if (data.exp4) {
+      html += `<tr><td>Zero-Trust Latency Overhead</td><td>${data.exp4.zt_latency_overhead_ms} ms</td></tr>`;
+    }
+    // Stability
+    if (data.exp7) {
+      html += `<tr><td>DQN Oscillation Rate</td><td>${(data.exp7.dqn_oscillation_rate * 100).toFixed(1)}%</td></tr>`;
+      html += `<tr><td>PPO Oscillation Rate</td><td>${(data.exp7.ppo_oscillation_rate * 100).toFixed(1)}%</td></tr>`;
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<p class="text-error text-sm">Failed to load summary: ' + err.message + '</p>';
+  }
+}
+
+async function loadCharts() {
+  const container = document.getElementById('charts-container');
+  try {
+    const resp = await fetch('/charts');
+    const data = await resp.json();
+    const charts = data.charts || [];
+
+    if (charts.length === 0) {
+      container.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-48 opacity-50">
+          <i class="fa-solid fa-chart-line text-4xl mb-3"></i>
+          <p class="text-sm">No charts found. Run training first.</p>
+        </div>`;
+      return;
+    }
+
+    // Group by subdirectory
+    const groups = {};
+    charts.forEach(path => {
+      const parts = path.split('/');
+      const group = parts.length > 1 ? parts.slice(0, -1).join('/') : 'root';
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(path);
+    });
+
+    // Section heading labels
+    const groupLabel = (key) => {
+      if (key === 'root') return 'Training Results';
+      return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    };
+
+    let html = '';
+    Object.keys(groups).sort().forEach(group => {
+      html += `<h4 class="text-sm font-bold mt-4 mb-2 opacity-80">
+        <i class="fa-solid fa-folder-open mr-1 text-primary"></i> ${groupLabel(group)}
+      </h4>`;
+      html += '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">';
+      groups[group].forEach(path => {
+        const name = path.split('/').pop().replace('.png', '').replace(/_/g, ' ');
+        html += `
+          <div class="card bg-base-200 shadow-sm hover:shadow-md transition-shadow">
+            <figure class="px-2 pt-2">
+              <img src="/charts/${path}" alt="${name}" loading="lazy"
+                   class="rounded w-full cursor-pointer hover:scale-[1.02] transition-transform"
+                   onclick="openChartModal(this.src, '${name}')" />
+            </figure>
+            <div class="card-body p-2">
+              <p class="text-xs opacity-70 text-center">${name}</p>
+            </div>
+          </div>`;
+      });
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<p class="text-error text-sm">Failed to load charts: ' + err.message + '</p>';
+  }
+}
+
+// Chart lightbox modal
+function openChartModal(src, title) {
+  let modal = document.getElementById('chart-modal');
+  if (!modal) {
+    modal = document.createElement('dialog');
+    modal.id = 'chart-modal';
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-box max-w-4xl bg-base-100">
+        <form method="dialog">
+          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 id="chart-modal-title" class="font-bold text-sm mb-2"></h3>
+        <img id="chart-modal-img" class="w-full rounded" />
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>`;
+    document.body.appendChild(modal);
+  }
+  document.getElementById('chart-modal-title').textContent = title;
+  document.getElementById('chart-modal-img').src = src;
+  modal.showModal();
+}
+
+// Refresh button
+document.getElementById('btn-refresh-charts').addEventListener('click', () => {
+  loadCharts();
+  showToast('info', 'Charts refreshed');
+});
+
+// Load on tab switch
+document.querySelectorAll('[data-tab]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    if (tab.dataset.tab === 'training') {
+      loadSummary();
+      loadCharts();
+    }
+  });
+});
 
 </script>
 </body>
