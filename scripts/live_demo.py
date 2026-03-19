@@ -56,6 +56,13 @@ ATTACK_SCHEDULE = [
     # 150-180: all clear (no entry needed)
 ]
 
+ATTACK_TARGET_SWITCH = {
+    "ddos":     "s2",
+    "portscan": "s3",
+    "spoofing": "s4",
+    "mixed":    None,  # affects all access switches
+}
+
 ATTACK_CMD_MAP = {
     "ddos":     "src/attacks/ddos.py",
     "portscan": "src/attacks/port_scan.py",
@@ -87,6 +94,11 @@ class AttackScheduler:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._processes: List[subprocess.Popen] = []
+
+    @property
+    def target_switch(self) -> Optional[str]:
+        """Primary switch targeted by the active attack, or None."""
+        return ATTACK_TARGET_SWITCH.get(self.attack_type) if self.attack_type else None
 
     def start(self) -> None:
         """Start the scheduler in a background daemon thread."""
@@ -368,6 +380,7 @@ def run_rl_loop(
             "cumulative_reward": float(cumulative_reward),
             "attack_active": attack_scheduler.attack_active,
             "attack_type": attack_scheduler.attack_type,
+            "target_switch": attack_scheduler.target_switch,
             "metrics": {
                 "detection_rate": det_rate / 100,
                 "false_positive_rate": fpr / 100,
@@ -387,6 +400,15 @@ def run_rl_loop(
             break
 
         time.sleep(step_interval)
+
+    # Episode-done event for dashboard
+    if event_callback is not None:
+        event_callback({
+            "type": "episode_done",
+            "timestamp": time.time(),
+            "steps": step_num,
+            "cumulative_reward": float(cumulative_reward),
+        })
 
     # Summary
     print(f"\n{'='*70}")

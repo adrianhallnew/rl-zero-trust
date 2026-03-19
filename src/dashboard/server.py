@@ -97,6 +97,8 @@ class DashboardState:
         """Thread-safe publish from the RL loop (non-async context)."""
         self.last_event = event
         self.events.append(event)
+        if len(self.events) > 1000:
+            self.events = self.events[-1000:]
         for q in list(self.subscribers):
             try:
                 q.put_nowait(event)

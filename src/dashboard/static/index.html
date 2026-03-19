@@ -482,6 +482,9 @@ function handleEvent(event) {
     case 'toast':
       showToast(event.level || 'info', event.message);
       break;
+    case 'episode_done':
+      showToast('success', `Episode complete — ${event.steps} steps | Cumulative reward: ${(event.cumulative_reward || 0).toFixed(2)}`);
+      break;
   }
 }
 
@@ -968,12 +971,20 @@ function updateTopology(ev) {
 
   if (isAttack) {
     const actionColor = actionId === 1 ? '#ef4444' : actionId === 3 ? '#f59e0b' : actionId === 2 ? '#60a5fa' : '#ef4444';
+    const targetSw = ev.target_switch || null;  // e.g. "s2", or null for mixed/unknown
 
     s1G.select('rect')
       .attr('stroke', '#ef4444').attr('fill', '#1a0505')
       .style('filter', 'url(#glow-red)').classed('pulse-attack', true);
 
-    linkEls.filter(d => d.ltype === 'trunk')
+    // Highlight only the targeted access switch (or all if mixed/null)
+    swGs.filter(d => !targetSw || d.id === targetSw)
+      .select('rect')
+      .attr('stroke', '#ef4444').attr('fill', '#1a0505')
+      .style('filter', 'url(#glow-red)').classed('pulse-attack', true);
+
+    // Colour only the trunk link(s) to the targeted switch (or all if mixed)
+    linkEls.filter(d => d.ltype === 'trunk' && (!targetSw || d.target === targetSw))
       .attr('stroke', actionColor).attr('stroke-width', 3).attr('opacity', 1)
       .classed('blocked', actionId === 1)
       .classed('trunk-active', actionId !== 1);
