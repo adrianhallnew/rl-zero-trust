@@ -1,27 +1,1051 @@
 <!doctype html>
-<html data-theme="night">
-  <head>
-    <meta charset="UTF-8" />
-    <title>RL Zero-Trust Dashboard</title>
-  </head>
-  <body
-    style="
-      background: #1a1a2e;
-      color: #fff;
-      font-family: monospace;
-      padding: 2rem;
-    "
-  >
-    <h1>Phase A — Backend OK</h1>
-    <p>SSE endpoint: <code>/events</code></p>
-    <p>Status endpoint: <code>/status</code></p>
-    <div id="log"></div>
-    <script>
-      const es = new EventSource("/events");
-      es.onmessage = (e) => {
-        const div = document.getElementById("log");
-        div.innerHTML = "<pre>" + e.data + "</pre>" + div.innerHTML;
-      };
-    </script>
-  </body>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RL Zero-Trust Network Security</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- DaisyUI v4 -->
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.24/dist/full.min.css" rel="stylesheet" />
+  <!-- FontAwesome 6 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <!-- Chart.js 4 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <!-- D3.js 7 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <!-- JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --clr-allow:     #22c55e;
+      --clr-block:     #ef4444;
+      --clr-reroute:   #3b82f6;
+      --clr-ratelimit: #f59e0b;
+      --clr-spoofing:  #a855f7;
+      --clr-normal:    #6b7280;
+    }
+    body { font-family: 'JetBrains Mono', monospace; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .stat-value { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+
+    /* Topology */
+    .topo-switch { cursor: pointer; }
+    .topo-switch:hover { filter: brightness(1.3); }
+    .topo-link { stroke-width: 3; transition: stroke 0.3s, stroke-dasharray 0.3s; }
+    .topo-link.blocked { stroke-dasharray: 8 4; }
+    .topo-label { font-size: 11px; fill: #e5e7eb; pointer-events: none; }
+
+    /* Pulse animation for attack */
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .pulse-attack { animation: pulse-red 1s ease-in-out infinite; }
+
+    /* Action timeline blocks */
+    .action-block { width: 10px; height: 28px; border-radius: 2px; display: inline-block; transition: background-color 0.2s; }
+
+    /* Event log */
+    #event-log { max-height: 200px; overflow-y: auto; }
+    #event-log:hover { overflow-y: auto; }
+    #event-log tr { transition: background-color 0.2s; }
+
+    /* Toast */
+    .toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 1000; display: flex; flex-direction: column-reverse; gap: 0.5rem; pointer-events: none; }
+    .toast-item { pointer-events: auto; animation: toast-in 0.3s ease-out; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(1rem); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Gauge bars for PPO */
+    .gauge-fill { transition: width 0.3s ease; height: 100%; border-radius: 2px; }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+    /* Chart container */
+    .chart-container { position: relative; width: 100%; }
+  </style>
+</head>
+
+<body class="bg-base-300 min-h-screen">
+
+<!-- ================================================================== -->
+<!-- NAVBAR                                                             -->
+<!-- ================================================================== -->
+<div class="navbar bg-base-100 shadow-lg px-4 gap-2 flex-wrap lg:flex-nowrap">
+  <!-- Brand -->
+  <div class="flex-none">
+    <i class="fa-solid fa-shield-halved text-primary text-xl mr-2"></i>
+    <span class="text-lg font-bold tracking-tight">RL Zero-Trust</span>
+  </div>
+
+  <!-- Spacer -->
+  <div class="flex-1"></div>
+
+  <!-- Connection status -->
+  <div class="flex items-center gap-2 text-sm">
+    <span id="conn-dot" class="w-2.5 h-2.5 rounded-full bg-error"></span>
+    <span id="conn-label" class="opacity-70">Disconnected</span>
+  </div>
+
+  <!-- Mode toggle -->
+  <div class="flex items-center gap-2 text-sm">
+    <span class="opacity-70">Live</span>
+    <input type="checkbox" id="mode-toggle" class="toggle toggle-sm toggle-primary" />
+    <span class="opacity-70">Sim</span>
+  </div>
+
+  <!-- Agent selector -->
+  <select id="agent-select" class="select select-sm select-bordered w-28">
+    <option value="dqn" selected>DQN</option>
+    <option value="ppo">PPO</option>
+  </select>
+
+  <!-- Controls -->
+  <button id="btn-start" class="btn btn-sm btn-success gap-1">
+    <i class="fa-solid fa-play text-xs"></i> Start
+  </button>
+  <button id="btn-stop" class="btn btn-sm btn-error gap-1" disabled>
+    <i class="fa-solid fa-stop text-xs"></i> Stop
+  </button>
+
+  <!-- Step / elapsed -->
+  <div class="text-sm opacity-70 font-mono hidden sm:flex gap-3">
+    <span>Step: <strong id="nav-step">0</strong></span>
+    <span id="nav-elapsed">00:00</span>
+  </div>
+
+  <!-- Export -->
+  <button id="btn-export" class="btn btn-sm btn-ghost gap-1" title="Export session JSON">
+    <i class="fa-solid fa-download"></i>
+  </button>
+</div>
+
+<!-- ================================================================== -->
+<!-- TABS                                                               -->
+<!-- ================================================================== -->
+<div class="tabs tabs-boxed bg-base-100 px-4 pt-2 justify-center gap-1">
+  <a class="tab tab-active" data-tab="live">
+    <i class="fa-solid fa-tower-broadcast mr-1"></i> Live Monitor
+  </a>
+  <a class="tab" data-tab="training">
+    <i class="fa-solid fa-chart-line mr-1"></i> Training Results
+  </a>
+  <a class="tab" data-tab="system">
+    <i class="fa-solid fa-diagram-project mr-1"></i> System Overview
+  </a>
+</div>
+
+<!-- ================================================================== -->
+<!-- TAB: LIVE MONITOR                                                  -->
+<!-- ================================================================== -->
+<div id="tab-live" class="tab-content p-4 space-y-4">
+
+  <!-- ── Stats Strip ──────────────────────────────────────────────── -->
+  <div class="stats stats-horizontal shadow w-full bg-base-100 text-sm overflow-x-auto">
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-shield-halved mr-1"></i>Detection</div>
+      <div class="stat-value text-lg text-success" id="stat-det">--</div>
+      <div class="stat-desc" id="stat-det-trend"></div>
+    </div>
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i>FPR</div>
+      <div class="stat-value text-lg text-warning" id="stat-fpr">--</div>
+      <div class="stat-desc" id="stat-fpr-trend"></div>
+    </div>
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-gauge-high mr-1"></i>Throughput</div>
+      <div class="stat-value text-lg" id="stat-tput">--</div>
+      <div class="stat-desc">Mbps</div>
+    </div>
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-clock mr-1"></i>Latency</div>
+      <div class="stat-value text-lg" id="stat-lat">--</div>
+      <div class="stat-desc">ms</div>
+    </div>
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-coins mr-1"></i>Reward</div>
+      <div class="stat-value text-lg" id="stat-reward">--</div>
+      <div class="stat-desc" id="stat-reward-cum"></div>
+    </div>
+    <div class="stat px-4 py-2">
+      <div class="stat-title text-xs"><i class="fa-solid fa-crosshairs mr-1"></i>Attack</div>
+      <div class="stat-value text-lg" id="stat-attack">
+        <span class="badge badge-ghost badge-sm">CLEAR</span>
+      </div>
+      <div class="stat-desc" id="stat-action"></div>
+    </div>
+  </div>
+
+  <!-- ── Main Grid: Topology + Right Panel ────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+    <!-- Topology (3 cols) -->
+    <div class="lg:col-span-3 card bg-base-100 shadow">
+      <div class="card-body p-3">
+        <h3 class="card-title text-sm">
+          <i class="fa-solid fa-network-wired mr-1"></i> Network Topology
+        </h3>
+        <div id="topology-container" style="width:100%;height:340px;"></div>
+      </div>
+    </div>
+
+    <!-- Right panel (2 cols) -->
+    <div class="lg:col-span-2 space-y-4">
+
+      <!-- Reward Components -->
+      <div class="card bg-base-100 shadow">
+        <div class="card-body p-3">
+          <h3 class="card-title text-sm">
+            <i class="fa-solid fa-chart-bar mr-1"></i> Reward Components
+          </h3>
+          <div class="chart-container" style="height:160px;">
+            <canvas id="reward-components-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Attack Controls -->
+      <div class="card bg-base-100 shadow">
+        <div class="card-body p-3">
+          <h3 class="card-title text-sm">
+            <i class="fa-solid fa-crosshairs mr-1"></i> Attack Controls
+          </h3>
+          <div class="flex flex-wrap gap-2 mt-1">
+            <button class="btn btn-sm btn-error gap-1 attack-btn" data-attack="ddos">
+              <i class="fa-solid fa-explosion"></i> DDoS
+            </button>
+            <button class="btn btn-sm btn-warning gap-1 attack-btn" data-attack="portscan">
+              <i class="fa-solid fa-magnifying-glass"></i> Scan
+            </button>
+            <button class="btn btn-sm btn-secondary gap-1 attack-btn" data-attack="spoofing">
+              <i class="fa-solid fa-masks-theater"></i> Spoof
+            </button>
+            <button class="btn btn-sm btn-accent gap-1 attack-btn" data-attack="mixed">
+              <i class="fa-solid fa-burst"></i> Mixed
+            </button>
+          </div>
+          <div class="flex flex-wrap gap-2 mt-2 items-center">
+            <button id="btn-auto-scenario" class="btn btn-sm btn-info gap-1">
+              <i class="fa-solid fa-forward"></i> Auto Scenario
+            </button>
+            <button id="btn-stop-attacks" class="btn btn-sm btn-ghost gap-1">
+              <i class="fa-solid fa-hand"></i> Stop All
+            </button>
+          </div>
+          <div class="flex items-center gap-2 mt-2 text-xs">
+            <span class="opacity-70">Intensity:</span>
+            <input type="range" id="attack-intensity" min="0.1" max="1.0" step="0.1" value="0.7"
+                   class="range range-xs range-primary flex-1" />
+            <span id="intensity-val" class="w-8 text-right font-bold">0.7</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Reward Timeline ──────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-3">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-chart-line mr-1"></i> Reward Timeline
+      </h3>
+      <div class="chart-container" style="height:180px;">
+        <canvas id="reward-timeline-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Action Timeline ──────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-3">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-timeline mr-1"></i> Action Timeline
+        <span class="ml-2 flex gap-2 text-xs font-normal opacity-70">
+          <span><span class="inline-block w-3 h-3 rounded-sm mr-0.5" style="background:var(--clr-allow)"></span>Allow</span>
+          <span><span class="inline-block w-3 h-3 rounded-sm mr-0.5" style="background:var(--clr-block)"></span>Block</span>
+          <span><span class="inline-block w-3 h-3 rounded-sm mr-0.5" style="background:var(--clr-reroute)"></span>Reroute</span>
+          <span><span class="inline-block w-3 h-3 rounded-sm mr-0.5" style="background:var(--clr-ratelimit)"></span>Rate Limit</span>
+        </span>
+      </h3>
+      <div id="action-timeline" class="flex gap-0.5 items-end mt-1 overflow-x-auto py-1 min-h-[36px]"></div>
+    </div>
+  </div>
+
+  <!-- ── PPO Detail Panel ─────────────────────────────────────────── -->
+  <div id="ppo-panel" class="card bg-base-100 shadow hidden">
+    <div class="card-body p-3">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-sliders mr-1"></i> PPO Continuous Actions
+        <span class="badge badge-primary badge-sm ml-2">PPO Only</span>
+      </h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+        <div>
+          <div class="flex justify-between text-xs mb-1">
+            <span class="opacity-70">Rate Limit Intensity</span>
+            <span class="font-bold" id="ppo-rl-val">0.00</span>
+          </div>
+          <div class="w-full bg-base-300 rounded h-4 overflow-hidden">
+            <div id="ppo-rl-bar" class="gauge-fill bg-error" style="width:0%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1">
+            <span class="opacity-70">Rerouting Weight</span>
+            <span class="font-bold" id="ppo-rr-val">0.00</span>
+          </div>
+          <div class="w-full bg-base-300 rounded h-4 overflow-hidden">
+            <div id="ppo-rr-bar" class="gauge-fill bg-info" style="width:0%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1">
+            <span class="opacity-70">Priority Adjustment</span>
+            <span class="font-bold" id="ppo-pr-val">0.00</span>
+          </div>
+          <div class="w-full bg-base-300 rounded h-4 overflow-hidden relative">
+            <div class="absolute top-0 left-1/2 w-px h-full bg-base-content opacity-30"></div>
+            <div id="ppo-pr-bar" class="gauge-fill bg-success absolute top-0" style="left:50%;width:0%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="text-xs mt-2 opacity-70">
+        Mapped to: <span id="ppo-mapped" class="font-bold text-base-content">--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Event Log ────────────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-3">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-list mr-1"></i> Event Log
+        <button id="btn-clear-log" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100">
+          <i class="fa-solid fa-trash-can"></i>
+        </button>
+      </h3>
+      <div id="event-log" class="overflow-x-auto">
+        <table class="table table-xs table-pin-rows">
+          <thead>
+            <tr>
+              <th class="w-20">Time</th>
+              <th class="w-14">Step</th>
+              <th class="w-24">Attack</th>
+              <th class="w-24">Action</th>
+              <th class="w-20">Reward</th>
+              <th class="w-20">Det%</th>
+            </tr>
+          </thead>
+          <tbody id="log-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-live -->
+
+<!-- ================================================================== -->
+<!-- TAB: TRAINING RESULTS (Phase C placeholder)                        -->
+<!-- ================================================================== -->
+<div id="tab-training" class="tab-content p-4 hidden">
+  <div class="flex items-center justify-center h-64 opacity-50">
+    <i class="fa-solid fa-chart-line text-4xl mr-3"></i>
+    <span class="text-lg">Training Results — Phase C</span>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- TAB: SYSTEM OVERVIEW (Phase D placeholder)                         -->
+<!-- ================================================================== -->
+<div id="tab-system" class="tab-content p-4 hidden">
+  <div class="flex items-center justify-center h-64 opacity-50">
+    <i class="fa-solid fa-diagram-project text-4xl mr-3"></i>
+    <span class="text-lg">System Overview — Phase D</span>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- TOAST CONTAINER                                                    -->
+<!-- ================================================================== -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ================================================================== -->
+<!-- JAVASCRIPT                                                         -->
+<!-- ================================================================== -->
+<script>
+// =====================================================================
+// CONSTANTS
+// =====================================================================
+const ACTION_COLORS = {
+  0: '#22c55e', // ALLOW
+  1: '#ef4444', // BLOCK
+  2: '#3b82f6', // REROUTE
+  3: '#f59e0b', // RATE_LIMIT
+};
+const ACTION_NAMES = { 0: 'ALLOW', 1: 'BLOCK', 2: 'REROUTE', 3: 'RATE_LIMIT' };
+const ATTACK_COLORS = {
+  ddos: '#ef4444',
+  portscan: '#f59e0b',
+  spoofing: '#a855f7',
+  mixed: '#f43f5e',
+};
+const MAX_TIMELINE_POINTS = 100;
+const MAX_ACTION_BLOCKS = 60;
+const MAX_LOG_ROWS = 150;
+
+// =====================================================================
+// STATE
+// =====================================================================
+let currentAgent = 'dqn';
+let isRunning = false;
+let startTime = null;
+let elapsedInterval = null;
+let logPaused = false;
+let prevDetRate = null;
+let prevFpr = null;
+
+// =====================================================================
+// TABS
+// =====================================================================
+document.querySelectorAll('[data-tab]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('[data-tab]').forEach(t => t.classList.remove('tab-active'));
+    tab.classList.add('tab-active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById('tab-' + tab.dataset.tab).classList.remove('hidden');
+  });
+});
+
+// =====================================================================
+// SSE CONNECTION
+// =====================================================================
+let eventSource = null;
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/events');
+
+  eventSource.onopen = () => {
+    document.getElementById('conn-dot').className = 'w-2.5 h-2.5 rounded-full bg-success';
+    document.getElementById('conn-label').textContent = 'Connected';
+  };
+
+  eventSource.onerror = () => {
+    document.getElementById('conn-dot').className = 'w-2.5 h-2.5 rounded-full bg-error';
+    document.getElementById('conn-label').textContent = 'Disconnected';
+  };
+
+  eventSource.onmessage = (e) => {
+    try {
+      const event = JSON.parse(e.data);
+      handleEvent(event);
+    } catch (err) {
+      console.error('SSE parse error:', err);
+    }
+  };
+}
+
+function handleEvent(event) {
+  switch (event.type) {
+    case 'step':
+      updateStats(event);
+      updateRewardTimeline(event);
+      updateRewardComponents(event);
+      updateActionTimeline(event);
+      updateTopology(event);
+      updatePPOPanel(event);
+      appendLogRow(event);
+      document.getElementById('nav-step').textContent = event.step;
+      break;
+    case 'attack_start':
+      showToast('warning', `Attack started: ${(event.attack_type || '').toUpperCase()}`);
+      break;
+    case 'attack_stop':
+      showToast('success', 'Attack stopped');
+      break;
+    case 'agent_switch':
+      currentAgent = event.agent;
+      document.getElementById('agent-select').value = event.agent;
+      togglePPOPanel();
+      showToast('info', `Switched to ${event.agent.toUpperCase()}`);
+      break;
+    case 'mode_switch':
+      document.getElementById('mode-toggle').checked = event.mode === 'sim';
+      showToast('info', `Mode: ${event.mode === 'sim' ? 'Simulation' : 'Live'}`);
+      break;
+    case 'toast':
+      showToast(event.level || 'info', event.message);
+      break;
+  }
+}
+
+connectSSE();
+
+// =====================================================================
+// STATS STRIP
+// =====================================================================
+function updateStats(ev) {
+  const m = ev.metrics || {};
+
+  // Detection rate
+  const det = (m.detection_rate * 100).toFixed(1);
+  const detEl = document.getElementById('stat-det');
+  detEl.textContent = det + '%';
+  detEl.className = 'stat-value text-lg ' + (m.detection_rate > 0.8 ? 'text-success' : m.detection_rate > 0.5 ? 'text-warning' : 'text-error');
+  if (prevDetRate !== null) {
+    const diff = m.detection_rate - prevDetRate;
+    document.getElementById('stat-det-trend').innerHTML = diff >= 0
+      ? `<span class="text-success"><i class="fa-solid fa-arrow-up text-xs"></i> ${(diff*100).toFixed(1)}pp</span>`
+      : `<span class="text-error"><i class="fa-solid fa-arrow-down text-xs"></i> ${(Math.abs(diff)*100).toFixed(1)}pp</span>`;
+  }
+  prevDetRate = m.detection_rate;
+
+  // FPR
+  const fpr = (m.false_positive_rate * 100).toFixed(2);
+  const fprEl = document.getElementById('stat-fpr');
+  fprEl.textContent = fpr + '%';
+  fprEl.className = 'stat-value text-lg ' + (m.false_positive_rate < 0.01 ? 'text-success' : m.false_positive_rate < 0.05 ? 'text-warning' : 'text-error');
+  if (prevFpr !== null) {
+    const diff = m.false_positive_rate - prevFpr;
+    document.getElementById('stat-fpr-trend').innerHTML = diff <= 0
+      ? `<span class="text-success"><i class="fa-solid fa-arrow-down text-xs"></i> ${(Math.abs(diff)*100).toFixed(2)}pp</span>`
+      : `<span class="text-error"><i class="fa-solid fa-arrow-up text-xs"></i> ${(diff*100).toFixed(2)}pp</span>`;
+  }
+  prevFpr = m.false_positive_rate;
+
+  // Throughput
+  document.getElementById('stat-tput').textContent = (m.throughput_mbps || 0).toFixed(0);
+
+  // Latency
+  document.getElementById('stat-lat').textContent = (m.latency_ms || 0).toFixed(0);
+
+  // Reward
+  const rewEl = document.getElementById('stat-reward');
+  rewEl.textContent = (ev.reward >= 0 ? '+' : '') + ev.reward.toFixed(3);
+  rewEl.className = 'stat-value text-lg ' + (ev.reward > 0.5 ? 'text-success' : ev.reward > 0 ? 'text-warning' : 'text-error');
+  document.getElementById('stat-reward-cum').textContent = 'Cum: ' + (ev.cumulative_reward >= 0 ? '+' : '') + ev.cumulative_reward.toFixed(2);
+
+  // Attack badge
+  const atkEl = document.getElementById('stat-attack');
+  if (ev.attack_active) {
+    const atkColor = ATTACK_COLORS[ev.attack_type] || '#ef4444';
+    atkEl.innerHTML = `<span class="badge badge-sm pulse-attack" style="background:${atkColor};color:#fff">${(ev.attack_type||'').toUpperCase()}</span>`;
+  } else {
+    atkEl.innerHTML = '<span class="badge badge-ghost badge-sm">CLEAR</span>';
+  }
+
+  // Action
+  const actionColor = ACTION_COLORS[ev.action] || '#6b7280';
+  document.getElementById('stat-action').innerHTML = `Action: <span style="color:${actionColor}" class="font-bold">${ev.action_name}</span>`;
+}
+
+// =====================================================================
+// REWARD TIMELINE (Chart.js)
+// =====================================================================
+const rewardTimelineCtx = document.getElementById('reward-timeline-chart').getContext('2d');
+const rewardTimelineData = { labels: [], datasets: [
+  { label: 'Reward', data: [], borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+] };
+
+// Attack phase background plugin
+const attackBandsPlugin = {
+  id: 'attackBands',
+  _bands: [],
+  beforeDraw(chart) {
+    const bands = this._bands;
+    if (!bands.length) return;
+    const { ctx, chartArea: { left, right, top, bottom }, scales: { x } } = chart;
+    bands.forEach(b => {
+      const x1 = x.getPixelForValue(b.start);
+      const x2 = x.getPixelForValue(b.end);
+      if (x2 < left || x1 > right) return;
+      ctx.save();
+      ctx.fillStyle = b.color;
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(Math.max(x1, left), top, Math.min(x2, right) - Math.max(x1, left), bottom - top);
+      ctx.restore();
+    });
+  }
+};
+
+const rewardTimelineChart = new Chart(rewardTimelineCtx, {
+  type: 'line',
+  data: rewardTimelineData,
+  plugins: [attackBandsPlugin],
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 200 },
+    scales: {
+      x: { display: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', font: { size: 10, family: 'JetBrains Mono' }, maxTicksLimit: 10 } },
+      y: { display: true, min: -1, max: 1, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', font: { size: 10, family: 'JetBrains Mono' } } },
+    },
+    plugins: { legend: { display: false } },
+    interaction: { intersect: false, mode: 'index' },
+  },
+});
+
+let currentAttackBand = null;
+
+function updateRewardTimeline(ev) {
+  const labels = rewardTimelineData.labels;
+  const data = rewardTimelineData.datasets[0].data;
+  labels.push(ev.step);
+  data.push(ev.reward);
+  if (labels.length > MAX_TIMELINE_POINTS) {
+    labels.shift();
+    data.shift();
+  }
+
+  // Track attack bands
+  if (ev.attack_active && !currentAttackBand) {
+    currentAttackBand = { start: ev.step, end: ev.step, color: ATTACK_COLORS[ev.attack_type] || '#ef4444' };
+    attackBandsPlugin._bands.push(currentAttackBand);
+  } else if (ev.attack_active && currentAttackBand) {
+    currentAttackBand.end = ev.step;
+  } else if (!ev.attack_active && currentAttackBand) {
+    currentAttackBand.end = ev.step;
+    currentAttackBand = null;
+  }
+
+  // Remove bands that scrolled off
+  const minStep = labels[0];
+  attackBandsPlugin._bands = attackBandsPlugin._bands.filter(b => b.end >= minStep);
+
+  rewardTimelineChart.update('none');
+}
+
+// =====================================================================
+// REWARD COMPONENTS (Chart.js horizontal bar)
+// =====================================================================
+const rcCtx = document.getElementById('reward-components-chart').getContext('2d');
+const rcLabels = ['Detection', 'False Pos', 'Throughput', 'Latency', 'Stability'];
+const rcColors = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#a855f7'];
+
+const rcChart = new Chart(rcCtx, {
+  type: 'bar',
+  data: {
+    labels: rcLabels,
+    datasets: [{
+      data: [0, 0, 0, 0, 0],
+      backgroundColor: rcColors.map(c => c + '99'),
+      borderColor: rcColors,
+      borderWidth: 1,
+    }],
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 200 },
+    scales: {
+      x: { min: -1, max: 1, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', font: { size: 10, family: 'JetBrains Mono' } } },
+      y: { grid: { display: false }, ticks: { color: '#d1d5db', font: { size: 11, family: 'JetBrains Mono' } } },
+    },
+    plugins: { legend: { display: false } },
+  },
+});
+
+function updateRewardComponents(ev) {
+  const rc = ev.reward_components || {};
+  rcChart.data.datasets[0].data = [
+    rc.r_detection || 0,
+    rc.r_false_positive || 0,
+    rc.r_throughput || 0,
+    rc.r_latency || 0,
+    rc.r_stability || 0,
+  ];
+  rcChart.update('none');
+}
+
+// =====================================================================
+// ACTION TIMELINE
+// =====================================================================
+const actionContainer = document.getElementById('action-timeline');
+
+function updateActionTimeline(ev) {
+  const block = document.createElement('div');
+  block.className = 'action-block';
+  block.style.backgroundColor = ACTION_COLORS[ev.action] || '#6b7280';
+  block.title = `Step ${ev.step}: ${ev.action_name}`;
+  actionContainer.appendChild(block);
+
+  // Trim old blocks
+  while (actionContainer.children.length > MAX_ACTION_BLOCKS) {
+    actionContainer.removeChild(actionContainer.firstChild);
+  }
+
+  // Auto-scroll right
+  actionContainer.scrollLeft = actionContainer.scrollWidth;
+}
+
+// =====================================================================
+// PPO PANEL
+// =====================================================================
+function togglePPOPanel() {
+  document.getElementById('ppo-panel').classList.toggle('hidden', currentAgent !== 'ppo');
+}
+
+function updatePPOPanel(ev) {
+  if (currentAgent !== 'ppo' || !ev.continuous_action) return;
+  const [rl, rr, pr] = ev.continuous_action;
+
+  document.getElementById('ppo-rl-val').textContent = rl.toFixed(3);
+  document.getElementById('ppo-rl-bar').style.width = (Math.abs(rl) * 100) + '%';
+
+  document.getElementById('ppo-rr-val').textContent = rr.toFixed(3);
+  document.getElementById('ppo-rr-bar').style.width = (Math.abs(rr) * 100) + '%';
+
+  document.getElementById('ppo-pr-val').textContent = pr.toFixed(3);
+  const prBar = document.getElementById('ppo-pr-bar');
+  if (pr >= 0) {
+    prBar.style.left = '50%';
+    prBar.style.width = (pr * 50) + '%';
+    prBar.className = 'gauge-fill bg-success absolute top-0';
+  } else {
+    prBar.style.left = (50 + pr * 50) + '%';
+    prBar.style.width = (Math.abs(pr) * 50) + '%';
+    prBar.className = 'gauge-fill bg-error absolute top-0';
+  }
+
+  document.getElementById('ppo-mapped').textContent = ev.action_name;
+  document.getElementById('ppo-mapped').style.color = ACTION_COLORS[ev.action] || '#fff';
+}
+
+// =====================================================================
+// D3.js NETWORK TOPOLOGY
+// =====================================================================
+function initTopology() {
+  const container = document.getElementById('topology-container');
+  const width = container.clientWidth || 700;
+  const height = 340;
+
+  const svg = d3.select('#topology-container')
+    .append('svg')
+    .attr('width', '100%')
+    .attr('height', height)
+    .attr('viewBox', `0 0 ${width} ${height}`);
+
+  // Define nodes: 5 switches + 15 hosts
+  const switches = [
+    { id: 's1', type: 'switch', x: width / 2,       y: 50 },
+    { id: 's2', type: 'switch', x: width / 3,       y: 140 },
+    { id: 's3', type: 'switch', x: (2 * width) / 3, y: 140 },
+    { id: 's4', type: 'switch', x: width / 5,       y: 230 },
+    { id: 's5', type: 'switch', x: (4 * width) / 5, y: 230 },
+  ];
+
+  // 3 hosts per switch, fanned below each switch
+  const hosts = [];
+  switches.forEach((sw, si) => {
+    for (let h = 0; h < 3; h++) {
+      const idx = si * 3 + h + 1;
+      const offsetX = (h - 1) * 55;
+      hosts.push({
+        id: 'h' + idx,
+        type: 'host',
+        parent: sw.id,
+        x: sw.x + offsetX,
+        y: sw.y + 70,
+      });
+    }
+  });
+
+  const nodes = [...switches, ...hosts];
+
+  // Links: switch-switch + switch-host
+  const switchLinks = [
+    { source: 's1', target: 's2' },
+    { source: 's1', target: 's3' },
+    { source: 's2', target: 's4' },
+    { source: 's3', target: 's5' },
+  ];
+  const hostLinks = hosts.map(h => ({ source: h.parent, target: h.id }));
+  const links = [...switchLinks, ...hostLinks];
+
+  // Draw links
+  const linkGroup = svg.append('g');
+  const linkEls = linkGroup.selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', 'topo-link')
+    .attr('x1', d => nodes.find(n => n.id === d.source).x)
+    .attr('y1', d => nodes.find(n => n.id === d.source).y)
+    .attr('x2', d => nodes.find(n => n.id === d.target).x)
+    .attr('y2', d => nodes.find(n => n.id === d.target).y)
+    .attr('stroke', '#4b5563')
+    .attr('data-source', d => d.source)
+    .attr('data-target', d => d.target);
+
+  // Draw host nodes (circles)
+  const hostGroup = svg.append('g');
+  hostGroup.selectAll('circle')
+    .data(hosts)
+    .join('circle')
+    .attr('cx', d => d.x)
+    .attr('cy', d => d.y)
+    .attr('r', 10)
+    .attr('fill', '#374151')
+    .attr('stroke', '#6b7280')
+    .attr('stroke-width', 1.5)
+    .attr('data-id', d => d.id);
+
+  // Draw switch nodes (rounded rects as hexagon-like)
+  const switchGroup = svg.append('g');
+  switchGroup.selectAll('rect')
+    .data(switches)
+    .join('rect')
+    .attr('class', 'topo-switch')
+    .attr('x', d => d.x - 18)
+    .attr('y', d => d.y - 18)
+    .attr('width', 36)
+    .attr('height', 36)
+    .attr('rx', 6)
+    .attr('fill', '#1e3a5f')
+    .attr('stroke', '#3b82f6')
+    .attr('stroke-width', 2)
+    .attr('data-id', d => d.id);
+
+  // Labels
+  const labelGroup = svg.append('g');
+  labelGroup.selectAll('text')
+    .data(nodes)
+    .join('text')
+    .attr('class', 'topo-label')
+    .attr('x', d => d.x)
+    .attr('y', d => d.type === 'switch' ? d.y + 4 : d.y + 4)
+    .attr('text-anchor', 'middle')
+    .attr('font-family', 'JetBrains Mono')
+    .text(d => d.id);
+
+  // Store references for updates
+  window._topo = { svg, linkEls, switchGroup, switches, nodes, links };
+}
+
+function updateTopology(ev) {
+  if (!window._topo) return;
+  const { linkEls, switchGroup, switches } = window._topo;
+  const isAttack = ev.attack_active;
+  const actionId = ev.action;
+
+  // Reset all links
+  linkEls
+    .attr('stroke', '#4b5563')
+    .classed('blocked', false)
+    .classed('pulse-attack', false);
+
+  // Reset switch colors
+  switchGroup.selectAll('rect')
+    .attr('fill', '#1e3a5f')
+    .attr('stroke', '#3b82f6')
+    .classed('pulse-attack', false);
+
+  if (isAttack) {
+    // Highlight s1 (core) and s2 under attack
+    switchGroup.selectAll('rect')
+      .filter(d => d.id === 's1' || d.id === 's2')
+      .attr('fill', '#7f1d1d')
+      .attr('stroke', '#ef4444')
+      .classed('pulse-attack', true);
+
+    // Highlight links from s1, s2
+    linkEls
+      .filter(d => d.source === 's1' || d.source === 's2' || d.target === 's1' || d.target === 's2')
+      .attr('stroke', () => {
+        if (actionId === 1) return '#ef4444';      // BLOCK
+        if (actionId === 3) return '#f59e0b';       // RATE_LIMIT
+        if (actionId === 2) return '#3b82f6';       // REROUTE
+        return '#ef4444';
+      })
+      .classed('blocked', actionId === 1)
+      .classed('pulse-attack', actionId === 0);
+  } else {
+    // Normal: green links for s1
+    linkEls
+      .filter(d => d.source === 's1' || d.target === 's1')
+      .attr('stroke', '#22c55e');
+  }
+}
+
+initTopology();
+
+// =====================================================================
+// EVENT LOG
+// =====================================================================
+const logBody = document.getElementById('log-body');
+const eventLogDiv = document.getElementById('event-log');
+
+// Pause auto-scroll on hover
+eventLogDiv.addEventListener('mouseenter', () => { logPaused = true; });
+eventLogDiv.addEventListener('mouseleave', () => { logPaused = false; });
+
+function appendLogRow(ev) {
+  const tr = document.createElement('tr');
+
+  // Row color
+  if (ev.attack_active) {
+    tr.className = 'bg-error/10';
+  }
+
+  const time = new Date(ev.timestamp * 1000).toLocaleTimeString('en-GB');
+  const m = ev.metrics || {};
+  const det = (m.detection_rate * 100).toFixed(1);
+  const rewStr = (ev.reward >= 0 ? '+' : '') + ev.reward.toFixed(3);
+  const actionColor = ACTION_COLORS[ev.action] || '#6b7280';
+  const atkLabel = ev.attack_active ? (ev.attack_type || '').toUpperCase() : '--';
+
+  tr.innerHTML = `
+    <td class="opacity-70">${time}</td>
+    <td>${ev.step}</td>
+    <td>${ev.attack_active ? '<span class="text-error font-bold">' + atkLabel + '</span>' : '<span class="opacity-40">--</span>'}</td>
+    <td><span style="color:${actionColor}" class="font-bold">${ev.action_name}</span></td>
+    <td class="${ev.reward >= 0 ? 'text-success' : 'text-error'}">${rewStr}</td>
+    <td>${det}%</td>
+  `;
+
+  logBody.prepend(tr);
+
+  // Trim
+  while (logBody.children.length > MAX_LOG_ROWS) {
+    logBody.removeChild(logBody.lastChild);
+  }
+
+  // Auto-scroll
+  if (!logPaused) {
+    eventLogDiv.scrollTop = 0;
+  }
+}
+
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+  logBody.innerHTML = '';
+});
+
+// =====================================================================
+// TOAST NOTIFICATIONS
+// =====================================================================
+const toastContainer = document.getElementById('toast-container');
+
+function showToast(level, message) {
+  const alertClass = {
+    info: 'alert-info',
+    warning: 'alert-warning',
+    success: 'alert-success',
+    error: 'alert-error',
+  }[level] || 'alert-info';
+
+  const iconClass = {
+    info: 'fa-circle-info',
+    warning: 'fa-triangle-exclamation',
+    success: 'fa-circle-check',
+    error: 'fa-circle-xmark',
+  }[level] || 'fa-circle-info';
+
+  const el = document.createElement('div');
+  el.className = 'toast-item';
+  el.innerHTML = `
+    <div class="alert ${alertClass} py-2 px-4 shadow-lg text-sm">
+      <i class="fa-solid ${iconClass}"></i>
+      <span>${message}</span>
+    </div>
+  `;
+  toastContainer.appendChild(el);
+
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.3s';
+    setTimeout(() => el.remove(), 300);
+  }, 4000);
+}
+
+// =====================================================================
+// CONTROLS
+// =====================================================================
+
+// Start / Stop
+document.getElementById('btn-start').addEventListener('click', async () => {
+  await fetch('/control/start', { method: 'POST' });
+  isRunning = true;
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  startTime = Date.now();
+  elapsedInterval = setInterval(updateElapsed, 1000);
+});
+
+document.getElementById('btn-stop').addEventListener('click', async () => {
+  await fetch('/control/stop', { method: 'POST' });
+  isRunning = false;
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  clearInterval(elapsedInterval);
+});
+
+function updateElapsed() {
+  if (!startTime) return;
+  const secs = Math.floor((Date.now() - startTime) / 1000);
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  document.getElementById('nav-elapsed').textContent = mm + ':' + ss;
+}
+
+// Agent switch
+document.getElementById('agent-select').addEventListener('change', async (e) => {
+  const agent = e.target.value;
+  currentAgent = agent;
+  togglePPOPanel();
+  await fetch(`/agent/${agent}`, { method: 'POST' });
+});
+
+// Mode toggle
+document.getElementById('mode-toggle').addEventListener('change', async (e) => {
+  const mode = e.target.checked ? 'sim' : 'live';
+  await fetch(`/mode/${mode}`, { method: 'POST' });
+});
+
+// Attack buttons
+document.querySelectorAll('.attack-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const type = btn.dataset.attack;
+    const intensity = document.getElementById('attack-intensity').value;
+    await fetch(`/attack/${type}?intensity=${intensity}`, { method: 'POST' });
+  });
+});
+
+document.getElementById('btn-auto-scenario').addEventListener('click', async () => {
+  await fetch('/scenario/auto', { method: 'POST' });
+});
+
+document.getElementById('btn-stop-attacks').addEventListener('click', async () => {
+  await fetch('/attack/stop', { method: 'POST' });
+});
+
+// Intensity slider
+document.getElementById('attack-intensity').addEventListener('input', (e) => {
+  document.getElementById('intensity-val').textContent = parseFloat(e.target.value).toFixed(1);
+});
+
+// Export
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const resp = await fetch('/export');
+  const data = await resp.json();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rl-zerotrust-session-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('success', 'Session exported');
+});
+
+// PPO panel visibility
+togglePPOPanel();
+
+</script>
+</body>
 </html>
