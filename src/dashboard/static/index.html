@@ -387,13 +387,297 @@
 </div>
 
 <!-- ================================================================== -->
-<!-- TAB: SYSTEM OVERVIEW (Phase D placeholder)                         -->
+<!-- TAB: SYSTEM OVERVIEW (Phase D)                                     -->
 <!-- ================================================================== -->
-<div id="tab-system" class="tab-panel p-4 hidden">
-  <div class="flex items-center justify-center h-64 opacity-50">
-    <i class="fa-solid fa-diagram-project text-4xl mr-3"></i>
-    <span class="text-lg">System Overview — Phase D</span>
+<div id="tab-system" class="tab-panel p-4 space-y-4 hidden">
+
+  <!-- ── Architecture Diagram ────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-diagram-project mr-1"></i> Docker Stack Architecture
+      </h3>
+      <div class="flex justify-center mt-2">
+        <svg id="arch-diagram" viewBox="0 0 800 420" class="w-full max-w-3xl" style="height:380px;">
+          <defs>
+            <filter id="glow-arch-blue"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="glow-arch-green"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="glow-arch-purple"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6Z" fill="#6b7280"/></marker>
+          </defs>
+
+          <!-- Browser -->
+          <rect x="280" y="10" width="240" height="44" rx="6" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+          <text x="400" y="28" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan><tspan fill="#3b82f6">&#xf268; </tspan>Browser — localhost:5000</tspan></text>
+          <text x="400" y="43" text-anchor="middle" fill="#9ca3af" font-size="9">SSE stream + REST controls</text>
+
+          <!-- Arrow: Browser -> FastAPI -->
+          <line x1="400" y1="54" x2="400" y2="78" stroke="#6b7280" stroke-width="1" marker-end="url(#arrowhead)"/>
+          <text x="412" y="70" fill="#9ca3af" font-size="8">SSE / POST</text>
+
+          <!-- FastAPI Dashboard -->
+          <rect x="240" y="80" width="320" height="44" rx="6" fill="#1e293b" stroke="#22c55e" stroke-width="1.5" filter="url(#glow-arch-green)"/>
+          <text x="400" y="98" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan fill="#22c55e">&#xf013; </tspan>FastAPI Dashboard Server (host:5000)</text>
+          <text x="400" y="113" text-anchor="middle" fill="#9ca3af" font-size="9">DashboardState + DemoEventBus + SSE</text>
+
+          <!-- Arrow: FastAPI -> RL Loop -->
+          <line x1="400" y1="124" x2="400" y2="148" stroke="#6b7280" stroke-width="1" marker-end="url(#arrowhead)"/>
+          <text x="412" y="140" fill="#9ca3af" font-size="8">asyncio Queue</text>
+
+          <!-- RL Loop -->
+          <rect x="240" y="150" width="320" height="44" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+          <text x="400" y="168" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan fill="#f59e0b">&#xf544; </tspan>live_demo.py — RL Loop Thread (host)</text>
+          <text x="400" y="183" text-anchor="middle" fill="#9ca3af" font-size="9">DQN/PPO Agent + StatsCollector + PolicyEnforcer + AttackScheduler</text>
+
+          <!-- Docker boundary -->
+          <rect x="30" y="220" width="740" height="185" rx="8" fill="none" stroke="#3b82f6" stroke-width="1" stroke-dasharray="6 3" opacity="0.5"/>
+          <text x="50" y="238" fill="#3b82f6" font-size="10" opacity="0.7"><tspan>&#xf4b7;</tspan> Docker Stack (WSL2) — 172.20.0.0/24</text>
+
+          <!-- OpenZiti Controller -->
+          <rect x="50" y="252" width="155" height="56" rx="5" fill="#1e293b" stroke="#a78bfa" stroke-width="1.2" filter="url(#glow-arch-purple)"/>
+          <text x="127" y="270" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">OpenZiti Controller</text>
+          <text x="127" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.10:1280</text>
+          <text x="127" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">mTLS + Identity Mgmt</text>
+
+          <!-- Ryu Controller -->
+          <rect x="225" y="252" width="155" height="56" rx="5" fill="#1e293b" stroke="#3b82f6" stroke-width="1.2" filter="url(#glow-arch-blue)"/>
+          <text x="302" y="270" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="600">Ryu SDN Controller</text>
+          <text x="302" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.20:8080/6633</text>
+          <text x="302" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">OpenFlow 1.3 REST API</text>
+
+          <!-- Mininet -->
+          <rect x="400" y="252" width="185" height="56" rx="5" fill="#1e293b" stroke="#22c55e" stroke-width="1.2" filter="url(#glow-arch-green)"/>
+          <text x="492" y="270" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600">Mininet (privileged)</text>
+          <text x="492" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.30 | 5 OVS + 15 hosts</text>
+          <text x="492" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">Scapy attacks + iPerf3</text>
+
+          <!-- RL Agent Container -->
+          <rect x="605" y="252" width="150" height="56" rx="5" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2"/>
+          <text x="680" y="270" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="600">RL Agent Container</text>
+          <text x="680" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.40</text>
+          <text x="680" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">TF 2.x + Checkpoints</text>
+
+          <!-- Arrows from RL loop to Docker -->
+          <line x1="340" y1="194" x2="302" y2="250" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrowhead)"/>
+          <text x="305" y="222" fill="#3b82f6" font-size="8">REST :8080</text>
+          <line x1="460" y1="194" x2="492" y2="250" stroke="#22c55e" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrowhead)"/>
+          <text x="465" y="222" fill="#22c55e" font-size="8">docker exec</text>
+
+          <!-- Internal Docker links -->
+          <line x1="380" y1="280" x2="400" y2="280" stroke="#6b7280" stroke-width="0.8" marker-end="url(#arrowhead)"/>
+          <text x="388" y="322" text-anchor="middle" fill="#6b7280" font-size="7">OF 1.3</text>
+          <line x1="302" y1="308" x2="302" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
+          <line x1="127" y1="308" x2="127" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
+          <line x1="492" y1="308" x2="492" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
+          <line x1="680" y1="308" x2="680" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+          <!-- mTLS overlay line -->
+          <line x1="127" y1="340" x2="680" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
+          <text x="400" y="355" text-anchor="middle" fill="#a78bfa" font-size="8" opacity="0.8">OpenZiti mTLS mesh (identity-verified dark services)</text>
+
+          <!-- Legend -->
+          <g transform="translate(50,375)">
+            <line x1="0" y1="0" x2="20" y2="0" stroke="#3b82f6" stroke-width="1.5"/><text x="25" y="4" fill="#9ca3af" font-size="8">REST API</text>
+            <line x1="100" y1="0" x2="120" y2="0" stroke="#22c55e" stroke-width="1.5"/><text x="125" y="4" fill="#9ca3af" font-size="8">Docker exec</text>
+            <line x1="220" y1="0" x2="240" y2="0" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3 2"/><text x="245" y="4" fill="#9ca3af" font-size="8">mTLS mesh</text>
+            <line x1="340" y1="0" x2="360" y2="0" stroke="#6b7280" stroke-width="1" stroke-dasharray="6 3"/><text x="365" y="4" fill="#9ca3af" font-size="8">Docker network boundary</text>
+          </g>
+        </svg>
+      </div>
+    </div>
   </div>
+
+  <!-- ── Two-column: Reward Formula + Network Specs ──────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+    <!-- Reward Formula -->
+    <div class="card bg-base-100 shadow">
+      <div class="card-body p-4">
+        <h3 class="card-title text-sm">
+          <i class="fa-solid fa-calculator mr-1"></i> Reward Function
+        </h3>
+        <div class="mt-3 text-center">
+          <div class="text-lg font-mono tracking-wide">
+            R(t) =
+            <span id="rw-det" class="px-1 py-0.5 rounded transition-all duration-300" style="color:#22c55e">0.40</span>&middot;R<sub>det</sub> +
+            <span id="rw-fp" class="px-1 py-0.5 rounded transition-all duration-300" style="color:#ef4444">0.25</span>&middot;R<sub>fp</sub> +
+            <span id="rw-thr" class="px-1 py-0.5 rounded transition-all duration-300" style="color:#3b82f6">0.15</span>&middot;R<sub>thr</sub> +
+            <span id="rw-lat" class="px-1 py-0.5 rounded transition-all duration-300" style="color:#f59e0b">0.10</span>&middot;R<sub>lat</sub> +
+            <span id="rw-stab" class="px-1 py-0.5 rounded transition-all duration-300" style="color:#a78bfa">0.10</span>&middot;R<sub>stab</sub>
+          </div>
+        </div>
+        <div class="overflow-x-auto mt-4">
+          <table class="table table-xs">
+            <thead>
+              <tr><th>Component</th><th>Weight</th><th>Description</th><th class="text-right">Last Value</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#22c55e"></span>R<sub>detection</sub></td>
+                <td class="font-mono">0.40</td>
+                <td class="text-xs opacity-70">Primary objective — attack identification accuracy</td>
+                <td class="text-right font-mono" id="rv-det">--</td>
+              </tr>
+              <tr>
+                <td><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#ef4444"></span>R<sub>false_positive</sub></td>
+                <td class="font-mono">0.25</td>
+                <td class="text-xs opacity-70">Penalty for blocking legitimate traffic</td>
+                <td class="text-right font-mono" id="rv-fp">--</td>
+              </tr>
+              <tr>
+                <td><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3b82f6"></span>R<sub>throughput</sub></td>
+                <td class="font-mono">0.15</td>
+                <td class="text-xs opacity-70">Network bandwidth preservation</td>
+                <td class="text-right font-mono" id="rv-thr">--</td>
+              </tr>
+              <tr>
+                <td><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f59e0b"></span>R<sub>latency</sub></td>
+                <td class="font-mono">0.10</td>
+                <td class="text-xs opacity-70">Packet forwarding delay minimization</td>
+                <td class="text-right font-mono" id="rv-lat">--</td>
+              </tr>
+              <tr>
+                <td><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#a78bfa"></span>R<sub>stability</sub></td>
+                <td class="font-mono">0.10</td>
+                <td class="text-xs opacity-70">Policy oscillation penalty</td>
+                <td class="text-right font-mono" id="rv-stab">--</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Network Specs -->
+    <div class="card bg-base-100 shadow">
+      <div class="card-body p-4">
+        <h3 class="card-title text-sm">
+          <i class="fa-solid fa-server mr-1"></i> Network Specifications
+        </h3>
+        <div class="overflow-x-auto mt-2">
+          <table class="table table-xs">
+            <tbody>
+              <tr><td class="opacity-70">Topology</td><td class="font-mono">Tree (depth=2, fanout=4)</td></tr>
+              <tr><td class="opacity-70">Switches</td><td class="font-mono">5 (1 core + 4 access) — Open vSwitch</td></tr>
+              <tr><td class="opacity-70">Hosts</td><td class="font-mono">15 (3 servers + 12 endpoints)</td></tr>
+              <tr><td class="opacity-70">Protocol</td><td class="font-mono">OpenFlow 1.3</td></tr>
+              <tr><td class="opacity-70">SDN Controller</td><td class="font-mono">Ryu 4.34 (ZeroTrustSwitch app)</td></tr>
+              <tr><td class="opacity-70">Docker Network</td><td class="font-mono">172.20.0.0/24 (bridge)</td></tr>
+              <tr><td class="opacity-70">Containers</td><td class="font-mono">4 — OpenZiti, Ryu, Mininet, RL-Agent</td></tr>
+              <tr><td class="opacity-70">Host OS</td><td class="font-mono">Windows 11 + WSL2 + Docker Desktop</td></tr>
+              <tr><td class="opacity-70">State Vector</td><td class="font-mono">65 dimensions (flow + port stats)</td></tr>
+              <tr><td class="opacity-70">Action Space</td><td class="font-mono">Discrete: 4 (ALLOW, BLOCK, REROUTE, RATE_LIMIT)</td></tr>
+              <tr><td class="opacity-70">Traffic Gen</td><td class="font-mono">iPerf3 (baseline) + Scapy (attacks)</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Agent Configuration ─────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-gears mr-1"></i> Agent Hyperparameters
+        <button id="btn-refresh-config" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </h3>
+      <div id="config-loading" class="flex items-center justify-center py-8 opacity-50">
+        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading configuration...
+      </div>
+      <div id="config-tables" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2 hidden">
+        <!-- DQN Config -->
+        <div>
+          <h4 class="text-xs font-bold text-info mb-2"><i class="fa-solid fa-brain mr-1"></i> DQN (Deep Q-Network)</h4>
+          <table class="table table-xs">
+            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
+            <tbody id="config-dqn-body"></tbody>
+          </table>
+        </div>
+        <!-- PPO Config -->
+        <div>
+          <h4 class="text-xs font-bold text-secondary mb-2"><i class="fa-solid fa-brain mr-1"></i> PPO (Proximal Policy Optimization)</h4>
+          <table class="table table-xs">
+            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
+            <tbody id="config-ppo-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── OpenZiti Zero-Trust Layer ───────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-shield-halved mr-1 text-purple-400"></i> OpenZiti Zero-Trust Layer
+      </h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+        <div class="bg-base-200 rounded-lg p-3">
+          <div class="text-xs font-bold text-purple-400 mb-1"><i class="fa-solid fa-fingerprint mr-1"></i> Identity-Based Access</div>
+          <p class="text-xs opacity-70 leading-relaxed">Every component (Ryu, Mininet, RL Agent) enrolls with a unique X.509 identity. No IP-based trust — all connections authenticated via mutual TLS certificates issued by the OpenZiti controller.</p>
+        </div>
+        <div class="bg-base-200 rounded-lg p-3">
+          <div class="text-xs font-bold text-purple-400 mb-1"><i class="fa-solid fa-eye-slash mr-1"></i> Dark Services</div>
+          <p class="text-xs opacity-70 leading-relaxed">Services are invisible to unauthorized identities. The RL agent has no open inbound ports — it initiates all connections outward. An nmap scan of 172.20.0.40 returns zero open ports, demonstrating the dark service model.</p>
+        </div>
+        <div class="bg-base-200 rounded-lg p-3">
+          <div class="text-xs font-bold text-purple-400 mb-1"><i class="fa-solid fa-lock mr-1"></i> mTLS Mesh</div>
+          <p class="text-xs opacity-70 leading-relaxed">All inter-component communication is encrypted end-to-end with mutual TLS. Session tokens are never stored — each connection is independently authenticated against the OpenZiti PKI. HTTP fallback available when ZT overlay is disabled.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Live OpenFlow Policy Rules ──────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-table-list mr-1"></i> Live OpenFlow Policy Rules
+        <div class="ml-auto flex items-center gap-2">
+          <select id="flows-dpid" class="select select-xs select-bordered w-24">
+            <option value="1">Switch 1</option>
+            <option value="2">Switch 2</option>
+            <option value="3">Switch 3</option>
+            <option value="4">Switch 4</option>
+            <option value="5">Switch 5</option>
+          </select>
+          <button id="btn-refresh-flows" class="btn btn-xs btn-ghost opacity-50 hover:opacity-100" title="Refresh">
+            <i class="fa-solid fa-rotate"></i>
+          </button>
+        </div>
+      </h3>
+      <div id="flows-loading" class="flex items-center justify-center py-6 opacity-50">
+        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading flow rules...
+      </div>
+      <div id="flows-error" class="flex items-center justify-center py-6 text-error hidden">
+        <i class="fa-solid fa-triangle-exclamation mr-2"></i>
+        <span id="flows-error-msg">Cannot reach Ryu controller</span>
+      </div>
+      <div id="flows-table-wrap" class="overflow-x-auto mt-2 hidden">
+        <table class="table table-xs">
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Match</th>
+              <th>Actions</th>
+              <th class="text-right">Packets</th>
+              <th class="text-right">Bytes</th>
+              <th class="text-right">Duration (s)</th>
+            </tr>
+          </thead>
+          <tbody id="flows-body"></tbody>
+        </table>
+      </div>
+      <div id="flows-empty" class="flex items-center justify-center py-6 opacity-50 hidden">
+        <i class="fa-solid fa-inbox mr-2"></i> No flow rules found for this switch
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ================================================================== -->
@@ -435,6 +719,7 @@ let elapsedInterval = null;
 let logPaused = false;
 let prevDetRate = null;
 let prevFpr = null;
+let lastStepEvent = null;
 
 // =====================================================================
 // TABS
@@ -488,6 +773,11 @@ function handleEvent(event) {
       updatePPOPanel(event);
       appendLogRow(event);
       document.getElementById('nav-step').textContent = event.step;
+      lastStepEvent = event;
+      // Update reward formula on System Overview tab if visible
+      if (!document.getElementById('tab-system').classList.contains('hidden')) {
+        updateRewardFormula();
+      }
       break;
     case 'attack_start':
       showToast('warning', `Attack started: ${(event.attack_type || '').toUpperCase()}`);
@@ -1337,8 +1627,226 @@ document.querySelectorAll('[data-tab]').forEach(tab => {
       loadSummary();
       loadCharts();
     }
+    if (tab.dataset.tab === 'system') {
+      loadConfig();
+      loadFlows();
+      updateRewardFormula();
+    }
   });
 });
+
+// =====================================================================
+// SYSTEM OVERVIEW TAB (Phase D)
+// =====================================================================
+
+// ── Agent Config ──────────────────────────────────────────────────
+let configCache = null;
+
+async function loadConfig() {
+  const loading = document.getElementById('config-loading');
+  const tables = document.getElementById('config-tables');
+  loading.classList.remove('hidden');
+  tables.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/config');
+    const data = await resp.json();
+    configCache = data;
+
+    renderConfigTable('config-dqn-body', data.dqn?.dqn || {}, [
+      ['hidden_layers', 'Hidden Layers'],
+      ['activation', 'Activation'],
+      ['learning_rate', 'Learning Rate'],
+      ['batch_size', 'Batch Size'],
+      ['gamma', 'Discount (γ)'],
+      ['tau', 'Soft Update (τ)'],
+      ['epsilon_start', 'ε Start'],
+      ['epsilon_end', 'ε End'],
+      ['epsilon_decay_steps', 'ε Decay Steps'],
+      ['buffer_size', 'Replay Buffer'],
+      ['train_freq', 'Train Frequency'],
+      ['max_episodes', 'Max Episodes'],
+      ['max_steps_per_episode', 'Steps/Episode'],
+    ]);
+
+    renderConfigTable('config-ppo-body', data.ppo?.ppo || {}, [
+      ['actor_layers', 'Actor Layers'],
+      ['critic_layers', 'Critic Layers'],
+      ['activation', 'Activation'],
+      ['learning_rate', 'Learning Rate'],
+      ['clip_epsilon', 'Clip ε'],
+      ['gamma', 'Discount (γ)'],
+      ['gae_lambda', 'GAE λ'],
+      ['n_epochs', 'Epochs/Update'],
+      ['batch_size', 'Batch Size'],
+      ['n_steps', 'Steps/Batch'],
+      ['entropy_coefficient', 'Entropy Coeff'],
+      ['value_loss_coefficient', 'Value Loss Coeff'],
+      ['max_grad_norm', 'Max Grad Norm'],
+      ['total_timesteps', 'Total Timesteps'],
+    ]);
+
+    loading.classList.add('hidden');
+    tables.classList.remove('hidden');
+  } catch (err) {
+    loading.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-2 text-error"></i> Failed to load config: ${err.message}`;
+  }
+}
+
+function renderConfigTable(tbodyId, cfg, fields) {
+  const tbody = document.getElementById(tbodyId);
+  let html = '';
+  fields.forEach(([key, label]) => {
+    const val = cfg[key];
+    if (val !== undefined) {
+      const display = Array.isArray(val) ? `[${val.join(', ')}]` : val;
+      html += `<tr><td class="opacity-70">${label}</td><td class="text-right font-mono">${display}</td></tr>`;
+    }
+  });
+  tbody.innerHTML = html;
+}
+
+document.getElementById('btn-refresh-config').addEventListener('click', () => {
+  loadConfig();
+  showToast('info', 'Config refreshed');
+});
+
+// ── Live OpenFlow Flows ───────────────────────────────────────────
+async function loadFlows() {
+  const dpid = document.getElementById('flows-dpid').value;
+  const loading = document.getElementById('flows-loading');
+  const tableWrap = document.getElementById('flows-table-wrap');
+  const errorDiv = document.getElementById('flows-error');
+  const emptyDiv = document.getElementById('flows-empty');
+
+  loading.classList.remove('hidden');
+  tableWrap.classList.add('hidden');
+  errorDiv.classList.add('hidden');
+  emptyDiv.classList.add('hidden');
+
+  try {
+    const resp = await fetch(`/flows/${dpid}`);
+    const data = await resp.json();
+    loading.classList.add('hidden');
+
+    if (data.error) {
+      document.getElementById('flows-error-msg').textContent = data.error;
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    // Ryu returns {dpid_str: [flows...]}
+    const flows = Object.values(data).flat();
+    if (flows.length === 0) {
+      emptyDiv.classList.remove('hidden');
+      return;
+    }
+
+    // Sort by priority descending
+    flows.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+    const tbody = document.getElementById('flows-body');
+    let html = '';
+    flows.forEach(f => {
+      const match = f.match || {};
+      const matchStr = formatMatch(match);
+      const actStr = (f.actions || []).map(a => {
+        if (typeof a === 'string') return a;
+        return a.type ? `${a.type}(${a.port || ''})` : JSON.stringify(a);
+      }).join(', ') || 'DROP';
+      const pri = f.priority ?? '--';
+      const pkts = f.packet_count ?? '--';
+      const bytes = f.byte_count ?? '--';
+      const dur = f.duration_sec ?? '--';
+
+      // Highlight RL-installed rules (priority 200-400)
+      const rowClass = (f.priority >= 200 && f.priority <= 400) ? 'text-warning' : '';
+
+      html += `<tr class="${rowClass}">
+        <td class="font-mono">${pri}</td>
+        <td class="text-xs font-mono max-w-[240px] truncate" title="${escHtml(matchStr)}">${matchStr}</td>
+        <td class="text-xs font-mono">${actStr}</td>
+        <td class="text-right font-mono">${typeof pkts === 'number' ? pkts.toLocaleString() : pkts}</td>
+        <td class="text-right font-mono">${typeof bytes === 'number' ? bytes.toLocaleString() : bytes}</td>
+        <td class="text-right font-mono">${dur}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+    tableWrap.classList.remove('hidden');
+  } catch (err) {
+    loading.classList.add('hidden');
+    document.getElementById('flows-error-msg').textContent = err.message;
+    errorDiv.classList.remove('hidden');
+  }
+}
+
+function formatMatch(match) {
+  const parts = [];
+  Object.keys(match).forEach(k => {
+    if (match[k] !== undefined && match[k] !== null) {
+      parts.push(`${k}=${match[k]}`);
+    }
+  });
+  return parts.length > 0 ? parts.join(', ') : '*';
+}
+
+function escHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+document.getElementById('btn-refresh-flows').addEventListener('click', () => {
+  loadFlows();
+  showToast('info', 'Flow rules refreshed');
+});
+
+document.getElementById('flows-dpid').addEventListener('change', () => {
+  loadFlows();
+});
+
+// ── Reward Formula Highlighting ───────────────────────────────────
+function updateRewardFormula() {
+  // Get last event's reward_components if available
+  const ev = lastStepEvent;
+  if (!ev || !ev.reward_components) return;
+
+  const rc = ev.reward_components;
+  const components = [
+    { id: 'rw-det', valId: 'rv-det', key: 'detection', color: '#22c55e' },
+    { id: 'rw-fp',  valId: 'rv-fp',  key: 'false_positive', color: '#ef4444' },
+    { id: 'rw-thr', valId: 'rv-thr', key: 'throughput', color: '#3b82f6' },
+    { id: 'rw-lat', valId: 'rv-lat', key: 'latency', color: '#f59e0b' },
+    { id: 'rw-stab',valId: 'rv-stab',key: 'stability', color: '#a78bfa' },
+  ];
+
+  // Find dominant component (highest absolute value)
+  let maxAbs = 0, maxKey = '';
+  components.forEach(c => {
+    const v = Math.abs(rc[c.key] || 0);
+    if (v > maxAbs) { maxAbs = v; maxKey = c.key; }
+  });
+
+  components.forEach(c => {
+    const el = document.getElementById(c.id);
+    const valEl = document.getElementById(c.valId);
+    const val = rc[c.key];
+
+    // Update last value column
+    if (valEl && val !== undefined) {
+      valEl.textContent = (typeof val === 'number') ? val.toFixed(3) : '--';
+      valEl.style.color = val >= 0 ? '#22c55e' : '#ef4444';
+    }
+
+    // Highlight dominant weight
+    if (c.key === maxKey) {
+      el.style.backgroundColor = c.color + '33'; // 20% opacity
+      el.style.fontWeight = '700';
+    } else {
+      el.style.backgroundColor = 'transparent';
+      el.style.fontWeight = '400';
+    }
+  });
+}
+
 
 </script>
 </body>
