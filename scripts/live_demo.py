@@ -243,8 +243,9 @@ def run_rl_loop(
     step_interval: float,
     attack_scheduler: AttackScheduler,
     event_callback=None,
+    mode: str = "live",
 ) -> None:
-    """Run the live-mode RL loop.
+    """Run the RL loop in live or simulation mode.
 
     Args:
         agent_name: ``"dqn"`` or ``"ppo"``.
@@ -253,22 +254,27 @@ def run_rl_loop(
         attack_scheduler: Provides ground-truth attack state.
         event_callback: Optional callable receiving the event dict each step
             (used by the dashboard SSE bus in Sprint 11).
+        mode: ``"live"`` (real Ryu SDN) or ``"sim"`` (synthetic data).
     """
-    # --- Instantiate SDN components ---
-    logger.info("Connecting to Ryu at %s ...", RYU_API_URL)
-    collector = StatsCollector(ryu_api_url=RYU_API_URL)
-    enforcer = PolicyEnforcer(ryu_api_url=RYU_API_URL)
+    # --- Instantiate SDN components (live mode only) ---
+    collector = None
+    enforcer = None
 
-    if not collector.wait_for_controller(timeout=30):
-        logger.error(
-            "Cannot reach Ryu controller at %s — is Docker running?",
-            RYU_API_URL,
-        )
-        sys.exit(1)
-    logger.info("Ryu controller reachable")
+    if mode == "live":
+        logger.info("Connecting to Ryu at %s ...", RYU_API_URL)
+        collector = StatsCollector(ryu_api_url=RYU_API_URL)
+        enforcer = PolicyEnforcer(ryu_api_url=RYU_API_URL)
 
-    switches = collector.get_switches()
-    logger.info("Switches registered: %s", switches)
+        if not collector.wait_for_controller(timeout=30):
+            logger.error(
+                "Cannot reach Ryu controller at %s — is Docker running?",
+                RYU_API_URL,
+            )
+            raise ConnectionError(f"Cannot reach Ryu at {RYU_API_URL}")
+        logger.info("Ryu controller reachable")
+        logger.info("Switches registered: %s", collector.get_switches())
+    else:
+        logger.info("Simulation mode — using synthetic data")
 
     # --- Load reward config and build environment ---
     reward_cfg = get_reward_config(agent_name)
@@ -298,8 +304,10 @@ def run_rl_loop(
     obs, info = env.reset()
     cumulative_reward = 0.0
 
+    mode_label = "LIVE" if mode == "live" else "SIMULATION"
+    switches = collector.get_switches() if collector else []
     print(f"\n{'='*70}")
-    print(f"  LIVE MODE — Agent: {agent_name.upper()}  |  Steps: {max_steps}")
+    print(f"  {mode_label} MODE — Agent: {agent_name.upper()}  |  Steps: {max_steps}")
     print(f"  Ryu API: {RYU_API_URL}  |  Switches: {switches}")
     print(f"{'='*70}\n")
 
@@ -537,12 +545,17 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
         while not loop_stop.is_set():
             # Wait for start signal (or start immediately if already requested)
             if not state.running:
-                if state.requested_start:
+                # Auto-restart if an agent or mode switch is pending
+                has_pending = (
+                    state.requested_start
+                    or (state.requested_agent and state.requested_agent != current_agent)
+                    or (state.requested_mode and state.requested_mode != current_mode)
+                )
+                if has_pending:
                     state.requested_start = False
                     state.running = True
                     state.start_time = time.time()
                     state.step = 0
-                    state.events.clear()
                 else:
                     time.sleep(0.2)
                     continue
@@ -553,6 +566,7 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
                 state.requested_agent = None
                 state.agent = current_agent
                 state.step = 0
+                state.events.clear()
                 state.publish_sync({
                     "type": "agent_switch",
                     "agent": current_agent,
@@ -624,7 +638,10 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
                     step_interval=args.step_interval,
                     attack_scheduler=scheduler_for_loop,
                     event_callback=_dashboard_callback,
+                    mode=current_mode,
                 )
+            except KeyboardInterrupt:
+                logger.info("RL loop interrupted (agent/mode switch or stop)")
             except Exception:
                 logger.exception("RL loop error")
             finally:

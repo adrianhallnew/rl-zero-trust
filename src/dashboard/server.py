@@ -84,6 +84,8 @@ class DashboardState:
         """Push an event to all SSE subscribers."""
         self.last_event = event
         self.events.append(event)
+        if len(self.events) > 1000:
+            self.events = self.events[-1000:]
         dead: List[asyncio.Queue] = []
         for q in self.subscribers:
             try:
