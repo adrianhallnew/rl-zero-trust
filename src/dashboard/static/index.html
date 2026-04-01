@@ -737,19 +737,32 @@ document.querySelectorAll('[data-tab]').forEach(tab => {
 // SSE CONNECTION
 // =====================================================================
 let eventSource = null;
+let sseReconnectDelay = 1000;
+let sseReconnectTimer = null;
+const SSE_MAX_RECONNECT_DELAY = 15000;
 
 function connectSSE() {
   if (eventSource) eventSource.close();
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+
   eventSource = new EventSource('/events');
 
   eventSource.onopen = () => {
     document.getElementById('conn-dot').className = 'w-2.5 h-2.5 rounded-full bg-success';
     document.getElementById('conn-label').textContent = 'Connected';
+    sseReconnectDelay = 1000; // reset backoff on successful connect
   };
 
   eventSource.onerror = () => {
     document.getElementById('conn-dot').className = 'w-2.5 h-2.5 rounded-full bg-error';
-    document.getElementById('conn-label').textContent = 'Disconnected';
+    document.getElementById('conn-label').textContent = 'Reconnecting...';
+    eventSource.close();
+    // Exponential backoff reconnect
+    sseReconnectTimer = setTimeout(() => {
+      console.log(`SSE reconnecting (delay: ${sseReconnectDelay}ms)...`);
+      connectSSE();
+    }, sseReconnectDelay);
+    sseReconnectDelay = Math.min(sseReconnectDelay * 2, SSE_MAX_RECONNECT_DELAY);
   };
 
   eventSource.onmessage = (e) => {
@@ -1803,6 +1816,13 @@ document.getElementById('flows-dpid').addEventListener('change', () => {
   loadFlows();
 });
 
+// Auto-refresh flows every 5s when System tab is visible
+setInterval(() => {
+  if (!document.getElementById('tab-system').classList.contains('hidden')) {
+    loadFlows();
+  }
+}, 5000);
+
 // ── Reward Formula Highlighting ───────────────────────────────────
 function updateRewardFormula() {
   // Get last event's reward_components if available
@@ -1811,11 +1831,11 @@ function updateRewardFormula() {
 
   const rc = ev.reward_components;
   const components = [
-    { id: 'rw-det', valId: 'rv-det', key: 'detection', color: '#22c55e' },
-    { id: 'rw-fp',  valId: 'rv-fp',  key: 'false_positive', color: '#ef4444' },
-    { id: 'rw-thr', valId: 'rv-thr', key: 'throughput', color: '#3b82f6' },
-    { id: 'rw-lat', valId: 'rv-lat', key: 'latency', color: '#f59e0b' },
-    { id: 'rw-stab',valId: 'rv-stab',key: 'stability', color: '#a78bfa' },
+    { id: 'rw-det', valId: 'rv-det', key: 'r_detection', color: '#22c55e' },
+    { id: 'rw-fp',  valId: 'rv-fp',  key: 'r_false_positive', color: '#ef4444' },
+    { id: 'rw-thr', valId: 'rv-thr', key: 'r_throughput', color: '#3b82f6' },
+    { id: 'rw-lat', valId: 'rv-lat', key: 'r_latency', color: '#f59e0b' },
+    { id: 'rw-stab',valId: 'rv-stab',key: 'r_stability', color: '#a78bfa' },
   ];
 
   // Find dominant component (highest absolute value)

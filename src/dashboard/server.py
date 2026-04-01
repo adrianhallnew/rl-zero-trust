@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -70,6 +71,9 @@ class DashboardState:
         # SSE subscribers (asyncio queues, one per connected browser tab)
         self.subscribers: List[asyncio.Queue] = []
 
+        # Event loop reference for thread-safe publishing
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         # Control signals (read by RL thread)
         self.requested_agent: Optional[str] = None
         self.requested_mode: Optional[str] = None
@@ -96,15 +100,25 @@ class DashboardState:
             self.subscribers.remove(q)
 
     def publish_sync(self, event: Dict[str, Any]) -> None:
-        """Thread-safe publish from the RL loop (non-async context)."""
+        """Thread-safe publish from the RL loop (non-async context).
+
+        Uses ``loop.call_soon_threadsafe`` to schedule queue puts on
+        the event loop thread, ensuring ``asyncio.Queue`` waiters are
+        properly notified.
+        """
         self.last_event = event
         self.events.append(event)
         if len(self.events) > 1000:
             self.events = self.events[-1000:]
+
+        loop = self._loop
         for q in list(self.subscribers):
             try:
-                q.put_nowait(event)
-            except (asyncio.QueueFull, Exception):
+                if loop is not None and loop.is_running():
+                    loop.call_soon_threadsafe(q.put_nowait, event)
+                else:
+                    q.put_nowait(event)
+            except (asyncio.QueueFull, RuntimeError):
                 pass
 
     def subscribe(self) -> asyncio.Queue:
@@ -128,7 +142,16 @@ state = DashboardState()
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="RL Zero-Trust Dashboard", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Capture the running event loop for thread-safe publish_sync."""
+    state._loop = asyncio.get_running_loop()
+    yield
+    state._loop = None
+
+
+app = FastAPI(title="RL Zero-Trust Dashboard", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
