@@ -28,9 +28,27 @@ Network Traffic --> Mininet Virtual Switches --> Ryu SDN Controller (OpenFlow 1.
 
 All inter-component communication is secured via OpenZiti (mTLS, identity-based routing, dark services).
 
+## Interactive Dashboard
+
+A browser-based dashboard at `http://localhost:5000` provides real-time monitoring and control:
+
+- **Live Monitor** — D3.js force-directed topology, reward/action timelines, sparklines, confusion matrix, attack controls, agent switching (DQN/PPO mid-demo)
+- **Training Results** — Pre-computed charts, DQN vs PPO comparison table, summary KPIs
+- **System Overview** — Architecture diagram, reward formula, agent configs, live flow rules
+
+```bash
+# Launch dashboard + RL loop (live mode, requires Docker)
+python -m scripts.live_demo --agent dqn --steps 200
+
+# Launch in simulation mode (no Docker needed)
+python -m scripts.live_demo --agent dqn --mode sim --steps 200
+```
+
+All frontend assets (Tailwind, DaisyUI, Chart.js, D3.js, FontAwesome, JetBrains Mono) are bundled locally in `src/dashboard/static/vendor/` — no internet required.
+
 ## Prerequisites
 
-- **OS:** Windows 11 with WSL2 enabled
+- **OS:** Windows 10/11 with WSL2 enabled
 - **Docker:** Docker Desktop 4.x with WSL2 backend
 - **RAM:** 16 GB minimum (11 GB allocated to containers)
 - **CPU:** 4+ cores recommended (no GPU required)
@@ -115,13 +133,17 @@ rl-zero-trust/
 ├── src/                        # Source code
 │   ├── environment/            # Gym-compatible RL environment
 │   ├── agents/                 # DQN and PPO implementations
-│   ├── sdn/                    # Mininet topology & Ryu apps
+│   ├── sdn/                    # Stats collector & policy enforcer
+│   ├── dashboard/              # FastAPI server + single-file HTML dashboard
+│   │   ├── server.py           # SSE streaming, 15 REST endpoints
+│   │   └── static/             # index.html + vendor/ (offline assets)
 │   ├── attacks/                # Attack simulation (DDoS, scan, spoof)
 │   ├── traffic/                # Legitimate traffic generation
 │   ├── zero_trust/             # OpenZiti SDK wrapper
 │   └── utils/                  # Logging, config, metrics, visualization
-├── scripts/                    # Training and evaluation entrypoints
-├── tests/                      # Unit and integration tests
+├── scripts/                    # Training, evaluation, and live demo entrypoints
+│   └── live_demo.py            # Dashboard + RL loop launcher
+├── tests/                      # 241 automated tests (unit, integration, stress)
 ├── notebooks/                  # Jupyter notebooks for analysis
 ├── results/                    # Training outputs and charts
 ├── checkpoints/                # Model checkpoints (gitignored)
@@ -152,6 +174,33 @@ rl-zero-trust/
 | 5 | 9-10 | PPO Agent Implementation |
 | 6 | 11-12 | Zero-Trust Integration & PPO Training |
 | 7 | 13-14 | System Evaluation & Documentation |
+| 8 | 15-16 | Docker Stack Validation |
+| 9 | 17-18 | Live Mode RL Loop |
+| 10 | 19-20 | Attack Integration |
+| 11 | 21-22 | Interactive Dashboard + 45-item fix audit |
+
+## Testing
+
+```bash
+# Run full test suite (241 tests)
+python -m pytest tests/ -v
+
+# Run specific phase
+python -m pytest tests/test_phase_a.py -v
+```
+
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| test_dqn.py | 12 | DQN network, action selection, epsilon, save/load |
+| test_ppo.py | 13 | Actor/critic, rollout buffer, GAE, clipping |
+| test_environment.py | 26 | Gym spaces, reset, step, truncation, simulation |
+| test_attacks.py | 45 | DDoS, portscan, spoofing, orchestrator |
+| test_integration.py | 94 | E2E episodes, evaluation, visualization |
+| test_dashboard_*.py | 15 | Server endpoints, UI layout, integration |
+| test_phase_a/b/e.py | 29 | Correctness, performance, gap coverage |
+| test_policy_enforcer.py | 8 | Flow rule REST API, error handling |
+| test_stats_collector.py | 6 | State vector normalization |
+| test_stress.py | 3 | Rapid attack cycling, process bounds |
 
 ## Troubleshooting
 
@@ -184,3 +233,6 @@ docker stats --no-stream
 
 # Reduce container limits in docker-compose.yml if needed
 ```
+
+### Dashboard not loading assets
+All vendor assets are bundled locally. If the dashboard shows unstyled content, verify `src/dashboard/static/vendor/` exists and contains `js/`, `css/`, `webfonts/`, and `fonts/` directories.
