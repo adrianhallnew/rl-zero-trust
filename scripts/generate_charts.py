@@ -5,8 +5,7 @@ results from results/dqn/, results/ppo/, results/comparative/, then
 produces all figures required for Chapter 6 (Testing & Evaluation) of the
 dissertation.
 
-All figures are saved as both PNG (300 DPI) and SVG to
-results/charts/sprint7/.
+All figures are saved as SVG to results/charts/sprint7/.
 
 Charts generated:
     1.  multi_seed_detection_rates     -- bar + error bars, DQN vs PPO
@@ -81,13 +80,11 @@ SCENARIOS_KEY     = ["ddos", "port_scan", "spoofing", "mixed"]
 
 def _save(fig: plt.Figure, name: str, charts_dir: str) -> str:
     os.makedirs(charts_dir, exist_ok=True)
-    png = os.path.join(charts_dir, f"{name}.png")
     svg = os.path.join(charts_dir, f"{name}.svg")
-    fig.savefig(png, format="png")
     fig.savefig(svg, format="svg")
     plt.close(fig)
-    logger.info("Saved: %s (.png + .svg)", name)
-    return png
+    logger.info("Saved: %s (.svg)", name)
+    return svg
 
 
 def _load_csv(path: str) -> List[Dict[str, Any]]:

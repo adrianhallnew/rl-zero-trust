@@ -1686,7 +1686,7 @@ async function loadCharts(force = false) {
       </h4>`;
       html += '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">';
       groups[group].forEach(path => {
-        const name = path.split('/').pop().replace('.png', '').replace(/_/g, ' ');
+        const name = path.split('/').pop().replace('.svg', '').replace(/_/g, ' ');
         html += `
           <div class="card bg-base-200 shadow-sm hover:shadow-md transition-shadow">
             <figure class="px-2 pt-2">

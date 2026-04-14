@@ -1,0 +1,5 @@
+scenario,detection_overall,detection_ddos,detection_portscan,detection_spoofing,false_positive_rate,adaptation_speed_s,throughput_degradation_pct,latency_overhead_ms,avg_reward,std_reward
+ddos,0.8938,1.0,0.0,0.0,0.0065,0.0,63.38,29.6,81.025,2.1362
+port_scan,0.8911,0.0,1.0,0.0,0.007,0.0,34.09,12.12,97.1556,0.9038
+spoofing,0.8921,0.0,0.0,1.0,0.0072,0.0,40.92,17.68,92.41,1.0933
+mixed,0.8942,1.0,1.0,1.0,0.0067,0.0,50.68,22.79,87.891,2.503

@@ -386,7 +386,7 @@ async def list_charts():
     """List available chart files."""
     charts = []
     if _CHARTS_DIR.exists():
-        for p in sorted(_CHARTS_DIR.rglob("*.png")):
+        for p in sorted(_CHARTS_DIR.rglob("*.svg")):
             rel = p.relative_to(_CHARTS_DIR).as_posix()
             charts.append(rel)
     return {"charts": charts}

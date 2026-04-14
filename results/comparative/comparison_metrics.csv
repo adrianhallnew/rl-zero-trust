@@ -1,0 +1,7 @@
+metric,dqn,ppo,winner
+Detection Rate,0.8942,0.8927,DQN
+False Positive Rate,0.0067,0.0069,DQN
+Adaptation Speed,0.0,0.0,PPO
+Throughput Degradation,50.68,53.0,DQN
+Latency Overhead,22.79,23.84,DQN
+Average Reward,87.891,86.6181,DQN

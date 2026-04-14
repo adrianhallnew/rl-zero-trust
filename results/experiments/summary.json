@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-02-24 10:43:22",
+  "exp1": {
+    "dqn_detection_mean": 0.8941,
+    "dqn_detection_std": 0.0,
+    "static_detection": 0.0589,
+    "improvement_pp": 83.52
+  },
+  "exp2": {
+    "ppo_detection_mean": 0.8943,
+    "ppo_detection_std": 0.0,
+    "static_detection": 0.0592,
+    "improvement_pp": 83.51
+  },
+  "exp3": {
+    "dqn": {
+      "detection_rate": null,
+      "detection_rate_std": null,
+      "false_positive_rate": null,
+      "avg_reward": null
+    },
+    "ppo": {
+      "detection_rate": null,
+      "detection_rate_std": null,
+      "false_positive_rate": null,
+      "avg_reward": null
+    }
+  },
+  "exp4": {
+    "zt_latency_overhead_ms": 5.0,
+    "dqn_latency_no_zt": 27.8477,
+    "dqn_latency_with_zt": 32.6147,
+    "detection_unchanged": false
+  },
+  "exp5": {
+    "detection_at_0.10": 0.8933,
+    "detection_at_0.50": 0.8938,
+    "graceful_degradation": true
+  },
+  "exp6": {
+    "detection_1_concurrent": 0.8962,
+    "detection_3_concurrent": 0.8856
+  },
+  "exp7": {
+    "dqn_oscillation_rate": 0.0,
+    "ppo_oscillation_rate": 0.0
+  }
+}

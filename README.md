@@ -143,11 +143,11 @@ rl-zero-trust/
 │   └── utils/                  # Logging, config, metrics, visualization
 ├── scripts/                    # Training, evaluation, and live demo entrypoints
 │   └── live_demo.py            # Dashboard + RL loop launcher
-├── tests/                      # 241 automated tests (unit, integration, stress)
+├── tests/                      # 306 automated tests (unit, integration, stress)
 ├── notebooks/                  # Jupyter notebooks for analysis
-├── results/                    # Training outputs and charts
-├── checkpoints/                # Model checkpoints (gitignored)
-├── captures/                   # Packet captures (gitignored)
+├── results/                    # Training outputs and charts (generated, gitignored)
+├── checkpoints/                # Model checkpoints (generated, gitignored)
+├── captures/                   # Packet captures (generated, gitignored)
 └── docs/                       # Architecture and sprint documentation
 ```
 
@@ -182,25 +182,31 @@ rl-zero-trust/
 ## Testing
 
 ```bash
-# Run full test suite (241 tests)
+# Run full test suite (306 tests)
 python -m pytest tests/ -v
 
-# Run specific phase
+# Run specific suite
 python -m pytest tests/test_phase_a.py -v
 ```
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| test_dqn.py | 12 | DQN network, action selection, epsilon, save/load |
-| test_ppo.py | 13 | Actor/critic, rollout buffer, GAE, clipping |
-| test_environment.py | 26 | Gym spaces, reset, step, truncation, simulation |
+| test_dqn.py | 18 | Network, action selection, epsilon, save/load, soft update, local RNG |
+| test_ppo.py | 36 | Actor/critic, GAE, clipping, explained variance, buffer overflow, local RNG |
+| test_environment.py | 19 | Gym spaces, reset, step, truncation, simulation |
 | test_attacks.py | 45 | DDoS, portscan, spoofing, orchestrator |
-| test_integration.py | 94 | E2E episodes, evaluation, visualization |
-| test_dashboard_*.py | 15 | Server endpoints, UI layout, integration |
-| test_phase_a/b/e.py | 29 | Correctness, performance, gap coverage |
-| test_policy_enforcer.py | 8 | Flow rule REST API, error handling |
-| test_stats_collector.py | 6 | State vector normalization |
-| test_stress.py | 3 | Rapid attack cycling, process bounds |
+| test_integration.py | 13 | E2E episodes, evaluation, config loading |
+| test_dashboard_server.py | 22 | Endpoints, SSE subscribe, memory cap, thread safety |
+| test_dashboard_integration.py | 22 | Agent/mode switch, attack flow, control lifecycle |
+| test_attack_scheduler.py | 16 | Timing, expiry, manual fire, auto-schedule, process reaping |
+| test_policy_enforcer.py | 11 | Flow rule REST API, error handling, action log cap |
+| test_stats_collector.py | 11 | Normalization, double-fetch elimination, timeout cache, reset |
+| test_stress.py | 7 | Concurrent publish, subscribe churn, rapid cycling |
+| test_live_demo_cli.py | 25 | CLI arg parsing, constants, bias validation, Docker health |
+| test_chart_generation.py | 13 | Chart helpers, CSV/JSON loading, SVG output |
+| test_openziti_client.py | 23 | Zero-trust client, access control, HTTP methods |
+| test_replay_buffer.py | 12 | Circular buffer, sampling, overflow |
+| test_reward.py | 13 | Reward components, composite bounds |
 
 ## Troubleshooting
 

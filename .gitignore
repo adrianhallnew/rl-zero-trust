@@ -36,6 +36,3 @@ results/logs/
 *.md
 !README.md
 *.local.json
-docs/
-tests/
-results/
