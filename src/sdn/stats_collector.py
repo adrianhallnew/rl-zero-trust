@@ -52,6 +52,7 @@ class StatsCollector:
         self.poll_interval = poll_interval
         self._last_stats = {}
         self._last_poll_time = 0.0
+        self._cumulative_flows = 0
         logger.info("StatsCollector initialized (API: %s)", self.api_url)
 
     # ---------------------------------------------------------------
@@ -80,8 +81,8 @@ class StatsCollector:
             logger.error("Cannot connect to Ryu API at %s", url)
             raise ConnectionError(f"Ryu API unreachable at {self.api_url}")
         except requests.Timeout:
-            logger.error("Ryu API request timed out: %s", url)
-            raise
+            logger.warning("Ryu API request timed out: %s — using cached data", url)
+            return self._last_stats if self._last_stats else {}
         except requests.HTTPError as e:
             logger.error("Ryu API error: %s %s", e.response.status_code, url)
             raise
@@ -168,11 +169,15 @@ class StatsCollector:
         logger.debug("Collected stats from %d switches", len(stats))
         return stats
 
-    def get_aggregate_flow_stats(self, dpid: int) -> Dict[str, float]:
+    def get_aggregate_flow_stats(
+        self, dpid: int, flows: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, float]:
         """Compute aggregate flow statistics for a switch.
 
         Args:
             dpid: Switch datapath ID.
+            flows: Pre-fetched flow entries (avoids redundant API call).
+                If None, fetches from the Ryu API.
 
         Returns:
             Dictionary with aggregated metrics:
@@ -182,7 +187,8 @@ class StatsCollector:
                 - avg_duration: Mean flow duration in seconds
                 - max_duration: Maximum flow duration
         """
-        flows = self.get_flow_stats(dpid)
+        if flows is None:
+            flows = self.get_flow_stats(dpid)
 
         if not flows:
             return {
@@ -205,11 +211,15 @@ class StatsCollector:
             "max_duration": float(max(durations)) if durations else 0.0,
         }
 
-    def get_aggregate_port_stats(self, dpid: int) -> Dict[str, float]:
+    def get_aggregate_port_stats(
+        self, dpid: int, ports: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, float]:
         """Compute aggregate port statistics for a switch.
 
         Args:
             dpid: Switch datapath ID.
+            ports: Pre-fetched port stats (avoids redundant API call).
+                If None, fetches from the Ryu API.
 
         Returns:
             Dictionary with aggregated port metrics:
@@ -218,7 +228,8 @@ class StatsCollector:
                 - total_rx_dropped, total_tx_dropped
                 - total_rx_errors, total_tx_errors
         """
-        ports = self.get_port_stats(dpid)
+        if ports is None:
+            ports = self.get_port_stats(dpid)
 
         if not ports:
             return {
@@ -278,8 +289,9 @@ class StatsCollector:
         state = np.zeros(num_switches * features_per_switch, dtype=np.float32)
 
         for i, dpid in enumerate(switches[:num_switches]):
-            flow_agg = self.get_aggregate_flow_stats(dpid)
-            port_agg = self.get_aggregate_port_stats(dpid)
+            sw = all_stats.get(dpid, {})
+            flow_agg = self.get_aggregate_flow_stats(dpid, flows=sw.get("flows"))
+            port_agg = self.get_aggregate_port_stats(dpid, ports=sw.get("ports"))
 
             offset = i * features_per_switch
 
@@ -305,6 +317,13 @@ class StatsCollector:
             state[offset + 12] = flow_agg["total_flows"] / elapsed
 
         return state
+
+    def reset(self) -> None:
+        """Reset cached stats and timing (call at the start of each episode)."""
+        self._last_stats = {}
+        self._last_poll_time = 0.0
+        self._cumulative_flows = 0
+        logger.debug("StatsCollector caches reset")
 
     def get_state_dim(self) -> int:
         """Return the dimensionality of the state vector.

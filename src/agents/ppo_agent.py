@@ -82,6 +82,10 @@ class RolloutBuffer:
         self._pos = 0
         self._full = False
 
+    def is_full(self) -> bool:
+        """Return True if the buffer has reached capacity."""
+        return self._full
+
     def add(
         self,
         state: np.ndarray,
@@ -91,7 +95,17 @@ class RolloutBuffer:
         value: float,
         done: bool,
     ) -> None:
-        """Store a single transition."""
+        """Store a single transition.
+
+        Raises:
+            RuntimeError: If the buffer is full and has not been flushed.
+        """
+        if self._full:
+            raise RuntimeError(
+                "RolloutBuffer is full — call compute_gae() + clear() "
+                "before storing new transitions."
+            )
+
         self.states[self._pos] = state
         self.actions[self._pos] = action
         self.log_probs[self._pos] = log_prob
@@ -252,9 +266,8 @@ class PPOAgent:
             action_dim=action_dim,
         )
 
-        # Reproducibility
+        # Reproducibility (local RNG only — don't pollute global state)
         seed = int(cfg.get("seed", 42))
-        np.random.seed(seed)
         tf.random.set_seed(seed)
         self._rng = np.random.RandomState(seed)
 
@@ -484,19 +497,22 @@ class PPOAgent:
 
         self._update_count += 1
 
+        # Compute explained variance BEFORE clearing buffer
+        # Use raw empirical returns vs predicted values (not TD-targets)
+        ev = self._compute_explained_variance(
+            self.rollout_buffer.values[:size],
+            self.rollout_buffer.returns[:size],
+        )
+
         # Clear buffer for next rollout
         self.rollout_buffer.clear()
-
-        # Compute explained variance
-        size_prev = size  # Buffer was just cleared
-        values = self.rollout_buffer.values[:size_prev] if size_prev > 0 else np.array([0.0])
-        returns = self.rollout_buffer.returns[:size_prev] if size_prev > 0 else np.array([0.0])
 
         result = {
             "actor_loss": float(np.mean(all_actor_losses)),
             "critic_loss": float(np.mean(all_critic_losses)),
             "entropy": float(np.mean(all_entropies)),
             "clip_fraction": float(np.mean(all_clip_fractions)),
+            "explained_variance": ev,
             "update_count": self._update_count,
         }
 
@@ -607,6 +623,25 @@ class PPOAgent:
             "entropy": float(entropy),
             "clip_fraction": clip_fraction,
         }
+
+    @staticmethod
+    def _compute_explained_variance(
+        predicted_values: np.ndarray,
+        empirical_returns: np.ndarray,
+    ) -> float:
+        """Compute explained variance: 1 - Var(returns - predicted) / Var(returns).
+
+        Args:
+            predicted_values: Critic's value predictions V(s).
+            empirical_returns: Actual discounted returns.
+
+        Returns:
+            Explained variance in [-inf, 1]. Returns 0 if Var(returns) < 1e-8.
+        """
+        var_returns = np.var(empirical_returns)
+        if var_returns < 1e-8:
+            return 0.0
+        return float(1.0 - np.var(empirical_returns - predicted_values) / var_returns)
 
     # ------------------------------------------------------------------
     # Persistence

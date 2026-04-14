@@ -304,11 +304,13 @@ class DDoSAttack:
         from scapy.all import send
 
         rate = pps or self.profile["packets_per_second"]
-        interval = 1.0 / max(rate, 1)
+        batch_size = min(50, max(1, rate // 10))
+        batch_interval = batch_size / max(rate, 1)
         self.start()
         logger.info(
-            "Live DDoS: type=%s, intensity=%s, duration=%ds, pps=%d",
+            "Live DDoS: type=%s, intensity=%s, duration=%ds, pps=%d, batch=%d",
             self.config.attack_type, self.config.intensity, duration, rate,
+            batch_size,
         )
 
         deadline = time.time() + duration
@@ -318,10 +320,11 @@ class DDoSAttack:
             if packets is None:
                 logger.error("Scapy unavailable — aborting live DDoS")
                 break
-            for pkt in packets:
-                send(pkt, verbose=False)
-                sent += 1
-            time.sleep(interval)
+            # Build batch from packet templates
+            batch = packets * max(1, batch_size // len(packets))
+            send(batch[:batch_size], verbose=False)
+            sent += len(batch[:batch_size])
+            time.sleep(batch_interval)
 
         self.stop()
         logger.info("Live DDoS finished — %d packets sent in %ds", sent, duration)

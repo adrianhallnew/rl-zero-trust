@@ -105,6 +105,7 @@ class AttackScheduler:
         self.schedule = schedule or ATTACK_SCHEDULE
         self.attack_active = False
         self.attack_type: Optional[str] = None
+        self._attack_end_time: Optional[float] = None
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._processes: List[subprocess.Popen] = []
@@ -130,6 +131,7 @@ class AttackScheduler:
         self._kill_processes()
         self.attack_active = False
         self.attack_type = None
+        self._attack_end_time = None
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
@@ -148,9 +150,17 @@ class AttackScheduler:
         reset flags on completion — the dashboard stop button or a new
         attack trigger handles that.
         """
+        # Kill any running auto-schedule thread first to avoid concurrent
+        # writes to attack_active/attack_type (E1.5 race condition fix).
+        if self._thread is not None and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join(timeout=2)
+            self._thread = None
         self._stop_event.clear()
+        self._kill_processes()
         self.attack_active = True
         self.attack_type = attack_type
+        self._attack_end_time = time.time() + duration
         self._reap_processes()
 
         if attack_type == "mixed":
@@ -169,8 +179,28 @@ class AttackScheduler:
         self._stop_event.set()
         self.attack_active = False
         self.attack_type = None
+        self._attack_end_time = None
         self._kill_processes()
         logger.info("All attacks stopped")
+
+    def check_expired(self) -> bool:
+        """Clear attack_active if the manual attack duration has elapsed.
+
+        Returns:
+            True if an attack was expired by this call.
+        """
+        if (
+            self._attack_end_time is not None
+            and self.attack_active
+            and time.time() >= self._attack_end_time
+        ):
+            logger.info("Attack expired: %s", self.attack_type)
+            self.attack_active = False
+            self.attack_type = None
+            self._attack_end_time = None
+            self._reap_processes()
+            return True
+        return False
 
     def _kill_processes(self) -> None:
         """Terminate and clear all tracked attack processes."""
@@ -293,6 +323,46 @@ class AttackScheduler:
 
 
 # ---------------------------------------------------------------------------
+# Docker Health Check
+# ---------------------------------------------------------------------------
+
+DOCKER_CONTAINERS = ["openziti-controller", "ryu-controller", "mininet", "rl-agent"]
+
+
+def _check_docker_health(publish_fn=None) -> bool:
+    """Check if all expected Docker containers are running.
+
+    Args:
+        publish_fn: Optional callable to publish toast events on failure.
+
+    Returns:
+        True if all containers are healthy.
+    """
+    all_healthy = True
+    for name in DOCKER_CONTAINERS:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Status}}", name],
+                capture_output=True, text=True, timeout=5,
+            )
+            status = result.stdout.strip()
+            if status != "running":
+                logger.warning("Container %s is %s (expected running)", name, status)
+                all_healthy = False
+                if publish_fn:
+                    publish_fn({
+                        "type": "toast",
+                        "level": "error",
+                        "message": f"Container '{name}' is {status}!",
+                        "timestamp": time.time(),
+                    })
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning("Cannot check container %s: %s", name, e)
+            all_healthy = False
+    return all_healthy
+
+
+# ---------------------------------------------------------------------------
 # RL Loop
 # ---------------------------------------------------------------------------
 
@@ -372,6 +442,9 @@ def run_rl_loop(
     print(f"{'='*70}\n")
 
     for step_num in range(1, max_steps + 1):
+        # Check if manual attack duration has expired
+        attack_scheduler.check_expired()
+
         # Update attack ground truth from scheduler
         env.set_attack_state(
             attack_scheduler.attack_active,
@@ -452,6 +525,7 @@ def run_rl_loop(
             "cumulative_reward": float(cumulative_reward),
             "attack_active": attack_scheduler.attack_active,
             "attack_type": attack_scheduler.attack_type,
+            "attack_end_time": attack_scheduler._attack_end_time,
             "target_switch": attack_scheduler.target_switch,
             "metrics": {
                 "detection_rate": det_rate / 100,
@@ -650,36 +724,8 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
                 })
                 logger.info("Mode switched to %s", current_mode)
 
-            # Check for stop attacks (process BEFORE attack trigger)
-            if state.requested_stop_attacks:
-                state.requested_stop_attacks = False
-                scheduler.stop_attacks()
-                state.publish_sync({
-                    "type": "attack_stop",
-                    "attack_type": "all",
-                    "timestamp": time.time(),
-                })
-
-            # Check for manual attack trigger (non-blocking)
-            if state.requested_attack:
-                attack_type = state.requested_attack
-                intensity_val = state.requested_attack_intensity
-                state.requested_attack = None
-                intensity_map = {0.3: "low", 0.7: "medium", 1.0: "high"}
-                closest = min(intensity_map.keys(), key=lambda x: abs(x - intensity_val))
-                scheduler.fire_manual(attack_type, duration=30, intensity=intensity_map[closest])
-                state.publish_sync({
-                    "type": "attack_start",
-                    "attack_type": attack_type,
-                    "timestamp": time.time(),
-                })
-
-            # Check for auto scenario
-            if state.requested_auto_scenario:
-                state.requested_auto_scenario = False
-                scheduler.stop()
-                scheduler = AttackScheduler(scenario="auto")
-                scheduler.start()
+            # Attack handling is done exclusively in _dashboard_callback
+            # during active RL execution to avoid duplicate processing (E2.3).
 
             # Check for stop request
             if state.requested_stop:

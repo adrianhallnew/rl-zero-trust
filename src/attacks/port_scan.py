@@ -315,9 +315,8 @@ class PortScanAttack:
             if packets is None:
                 logger.error("Scapy unavailable — aborting live scan")
                 break
-            for pkt in packets:
-                send(pkt, verbose=False)
-                sent += 1
+            send(packets, verbose=False)
+            sent += len(packets)
             self._steps_elapsed += 1
             time.sleep(delay)
 

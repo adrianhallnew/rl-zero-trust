@@ -91,8 +91,7 @@ class DQNAgent:
         )
         self.target_model = build_dqn_target_network(self.online_model)
 
-        # Reproducibility
-        np.random.seed(seed)
+        # Reproducibility (local RNG only — don't pollute global state)
         tf.random.set_seed(seed)
         self._rng = np.random.RandomState(seed)
 

@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -65,8 +67,9 @@ class DashboardState:
         self.start_time: Optional[float] = None
         self.last_event: Optional[Dict[str, Any]] = None
 
-        # Session history for export
+        # Session history for export (protected by _lock)
         self.events: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
 
         # SSE subscribers (asyncio queues, one per connected browser tab)
         self.subscribers: List[asyncio.Queue] = []
@@ -87,17 +90,21 @@ class DashboardState:
     async def publish(self, event: Dict[str, Any]) -> None:
         """Push an event to all SSE subscribers."""
         self.last_event = event
-        self.events.append(event)
-        if len(self.events) > 1000:
-            self.events = self.events[-1000:]
+        with self._lock:
+            self.events.append(event)
+            if len(self.events) > 1000:
+                self.events = self.events[-1000:]
         dead: List[asyncio.Queue] = []
-        for q in self.subscribers:
+        for q in list(self.subscribers):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 dead.append(q)
         for q in dead:
-            self.subscribers.remove(q)
+            try:
+                self.subscribers.remove(q)
+            except ValueError:
+                pass
 
     def publish_sync(self, event: Dict[str, Any]) -> None:
         """Thread-safe publish from the RL loop (non-async context).
@@ -107,9 +114,10 @@ class DashboardState:
         properly notified.
         """
         self.last_event = event
-        self.events.append(event)
-        if len(self.events) > 1000:
-            self.events = self.events[-1000:]
+        with self._lock:
+            self.events.append(event)
+            if len(self.events) > 1000:
+                self.events = self.events[-1000:]
 
         loop = self._loop
         for q in list(self.subscribers):
@@ -152,6 +160,8 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RL Zero-Trust Dashboard", docs_url=None, redoc_url=None, lifespan=_lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/vendor", StaticFiles(directory=str(_STATIC_DIR / "vendor")), name="vendor")
 
 
 # ---------------------------------------------------------------------------

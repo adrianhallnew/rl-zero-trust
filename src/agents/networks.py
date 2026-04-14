@@ -109,13 +109,6 @@ def soft_update_target(
         target_model: Destination (target) network.
         tau: Interpolation factor in [0, 1].
     """
-    for online_w, target_w in zip(
-        online_model.get_weights(), target_model.get_weights()
-    ):
-        target_w[:] = tau * online_w + (1.0 - tau) * target_w
-
-    # set_weights expects a list, but we modified in-place above
-    # so we need to explicitly push the updated arrays
     new_weights = []
     for online_w, target_w in zip(
         online_model.get_weights(), target_model.get_weights()

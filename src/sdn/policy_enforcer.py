@@ -73,6 +73,15 @@ class PolicyEnforcer:
     # DQN Discrete Actions
     # ------------------------------------------------------------------
 
+    # Default subnet mapping per switch DPID (tree topology)
+    SWITCH_SUBNETS = {
+        1: ("10.0.0.0", "255.255.0.0"),       # core — all traffic
+        2: ("10.0.1.0", "255.255.255.0"),      # edge s2
+        3: ("10.0.2.0", "255.255.255.0"),      # edge s3
+        4: ("10.0.3.0", "255.255.255.0"),      # edge s4
+        5: ("10.0.4.0", "255.255.255.0"),      # edge s5
+    }
+
     def enforce_action(
         self,
         action: int,
@@ -92,6 +101,16 @@ class PolicyEnforcer:
         Returns:
             True if enforcement succeeded, False otherwise.
         """
+        # Ensure match fields are never empty (wildcard) — restrict to
+        # at least dl_type + the switch's subnet if nothing is specified.
+        if not match_fields:
+            subnet = self.SWITCH_SUBNETS.get(dpid, ("10.0.0.0", "255.255.0.0"))
+            match_fields = {
+                "dl_type": 2048,  # 0x0800 = IPv4
+                "nw_src": subnet[0],
+                "nw_src_mask": subnet[1],
+            }
+
         action_name = ACTION_NAMES.get(action, "UNKNOWN")
         logger.info(
             "Enforcing %s (id=%d) on switch %d, match=%s",
@@ -120,6 +139,8 @@ class PolicyEnforcer:
                 "dpid": dpid,
                 "match_fields": match_fields,
             })
+            if len(self._action_log) > 500:
+                self._action_log = self._action_log[-500:]
 
         return success
 

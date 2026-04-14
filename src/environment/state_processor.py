@@ -127,6 +127,8 @@ class StateProcessor:
         """Clear the history buffer (call at the start of each episode)."""
         self._history.clear()
         self._last_state = None
+        if self.collector is not None:
+            self.collector.reset()
         logger.debug("StateProcessor history cleared")
 
     def get_last_raw_state(self) -> Optional[np.ndarray]:

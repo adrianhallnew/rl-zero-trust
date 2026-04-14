@@ -321,13 +321,12 @@ class SpoofingAttack:
             if packets is None:
                 logger.error("Scapy unavailable — aborting live spoofing")
                 break
-            for pkt in packets:
-                # MAC/ARP spoof packets have Ether layer → use sendp (layer 2)
-                if self.config.spoof_type in (SPOOF_MAC, SPOOF_ARP):
-                    sendp(pkt, verbose=False)
-                else:
-                    send(pkt, verbose=False)
-                sent += 1
+            # Batch send: MAC/ARP spoof packets have Ether layer → use sendp
+            if self.config.spoof_type in (SPOOF_MAC, SPOOF_ARP):
+                sendp(packets, verbose=False)
+            else:
+                send(packets, verbose=False)
+            sent += len(packets)
             time.sleep(0.1)
 
         self.stop()
