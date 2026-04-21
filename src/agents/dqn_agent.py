@@ -268,12 +268,19 @@ class DQNAgent:
         )
         return path
 
-    def load(self, directory: str, episode: Optional[int] = None) -> None:
+    def load(
+        self,
+        directory: str,
+        episode: Optional[int] = None,
+        live_mode: bool = False,
+    ) -> None:
         """Load model weights from disk.
 
         Args:
             directory: Directory containing checkpoint files.
             episode: Optional episode number in the filename.
+            live_mode: If True, force epsilon to ``epsilon_end`` for
+                pure exploitation (no random exploration in deployment).
         """
         suffix = f"_ep{episode}" if episode is not None else ""
         path = os.path.join(directory, f"dqn_model{suffix}.keras")
@@ -290,6 +297,13 @@ class DQNAgent:
             logger.info(
                 "Restored metadata: eps=%.4f, steps=%d",
                 self.epsilon, self.total_steps,
+            )
+
+        if live_mode:
+            self.epsilon = self.epsilon_end
+            logger.info(
+                "Live mode: epsilon forced to %.4f (epsilon_end)",
+                self.epsilon_end,
             )
 
     # ------------------------------------------------------------------

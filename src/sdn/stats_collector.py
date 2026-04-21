@@ -283,10 +283,20 @@ class StatsCollector:
         all_stats = self.collect_all_stats()
         switches = sorted(all_stats.keys())
 
-        # Ensure we always have 5 switches worth of features
+        # Ensure we always have 5 switches worth of features.
+        # Use -1.0 sentinel for missing switches so the agent sees them
+        # as anomalous (unknown) rather than safe (zero traffic).
         features_per_switch = 13
         num_switches = 5
-        state = np.zeros(num_switches * features_per_switch, dtype=np.float32)
+        state = np.full(
+            num_switches * features_per_switch, -1.0, dtype=np.float32,
+        )
+
+        if len(switches) < num_switches:
+            logger.warning(
+                "Expected %d switches, found %d — state vector has sentinel values",
+                num_switches, len(switches),
+            )
 
         for i, dpid in enumerate(switches[:num_switches]):
             sw = all_stats.get(dpid, {})

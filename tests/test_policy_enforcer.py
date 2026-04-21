@@ -58,8 +58,11 @@ class TestEnforceAction:
                 ACTION_ALLOW, dpid=1, match_fields={"dl_type": 2048},
             )
 
-        assert len(posted) == 1
+        # ALLOW now deletes restrictive rule + installs permissive NORMAL rule
+        assert len(posted) == 2
         assert "/delete" in posted[0]["url"]
+        assert "/add" in posted[1]["url"]
+        assert posted[1]["json"]["actions"] == [{"type": "OUTPUT", "port": "NORMAL"}]
 
     def test_reroute_has_output_action(self, enforcer):
         posted = []
@@ -115,11 +118,13 @@ class TestPickReroutePort:
     """Test reroute port selection logic."""
 
     def test_core_switch_returns_port_2(self):
-        assert PolicyEnforcer._pick_reroute_port(1) == 2
+        enforcer = PolicyEnforcer(ryu_api_url="http://fake:8080")
+        assert enforcer._pick_reroute_port(1) == 2
 
     def test_edge_switch_returns_port_1(self):
+        enforcer = PolicyEnforcer(ryu_api_url="http://fake:8080")
         for dpid in [2, 3, 4, 5]:
-            assert PolicyEnforcer._pick_reroute_port(dpid) == 1
+            assert enforcer._pick_reroute_port(dpid) == 1
 
 
 class TestErrorHandling:

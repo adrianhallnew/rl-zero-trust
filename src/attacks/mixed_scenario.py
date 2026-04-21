@@ -222,28 +222,44 @@ class AttackOrchestrator:
         latency = 5.0
 
         if attack_active:
+            # Determine primary attack type for detection difficulty
+            active_types = self.active_attack_types
+            primary = active_types[0] if active_types else "unknown"
+
+            # Base TP/FN scaled by attack detectability:
+            # DDoS = easy (volume anomaly), port_scan = moderate, spoofing = hard
+            if "flood" in primary or "ddos" in primary:
+                base_tp_high, base_fn_low = 9, 1     # Easy to detect
+            elif "port" in primary or "scan" in primary:
+                base_tp_high, base_fn_low = 7, 3     # Moderate
+            elif "spoof" in primary or "arp" in primary:
+                base_tp_high, base_fn_low = 5, 5     # Hard to detect
+            else:
+                base_tp_high, base_fn_low = 7, 3     # Default
+
             # Attack is happening
-            if action in (1, 3):    # BLOCK or RATE_LIMIT
-                tp = self._rng.randint(7, 11)
-                fn = self._rng.randint(0, 3)
+            if action == 1:             # BLOCK — strongest detection
+                tp = self._rng.randint(max(1, base_tp_high - 1), base_tp_high + 1)
+                fn = self._rng.randint(max(0, base_fn_low - 1), base_fn_low + 1)
                 fp = self._rng.randint(0, 2)
                 tn = 90 - fp
-                throughput = min(
-                    self._rng.uniform(60, 85),
-                    DEFAULT_BASELINE_THROUGHPUT,
-                )
-                latency = self._rng.uniform(5.0, 15.0)
-            elif action == 2:       # REROUTE
-                tp = self._rng.randint(5, 8)
-                fn = self._rng.randint(2, 5)
+                throughput = self._rng.uniform(35, 50)
+                latency = self._rng.uniform(5.0, 12.0)
+            elif action == 3:           # RATE_LIMIT — moderate detection, better throughput
+                tp = self._rng.randint(max(1, base_tp_high - 2), base_tp_high)
+                fn = self._rng.randint(base_fn_low, base_fn_low + 2)
                 fp = self._rng.randint(0, 1)
                 tn = 90 - fp
-                throughput = min(
-                    self._rng.uniform(50, 75),
-                    DEFAULT_BASELINE_THROUGHPUT,
-                )
-                latency = self._rng.uniform(8.0, 20.0)
-            else:                   # ALLOW -- bad during attack
+                throughput = self._rng.uniform(60, 80)
+                latency = self._rng.uniform(8.0, 18.0)
+            elif action == 2:           # REROUTE
+                tp = self._rng.randint(max(1, base_tp_high - 3), base_tp_high - 1)
+                fn = self._rng.randint(base_fn_low + 1, base_fn_low + 3)
+                fp = self._rng.randint(0, 1)
+                tn = 90 - fp
+                throughput = self._rng.uniform(55, 75)
+                latency = self._rng.uniform(10.0, 22.0)
+            else:                       # ALLOW -- bad during attack
                 tp = self._rng.randint(0, 2)
                 fn = self._rng.randint(7, 10)
                 fp = 0

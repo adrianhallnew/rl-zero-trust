@@ -1433,14 +1433,22 @@ function appendLogRow(ev) {
   const actionColor = ACTION_COLORS[ev.action] || '#6b7280';
   const atkLabel = ev.attack_active ? (ev.attack_type || '').toUpperCase() : '--';
 
-  tr.innerHTML = `
-    <td class="opacity-70">${time}</td>
-    <td>${ev.step}</td>
-    <td>${ev.attack_active ? '<span class="text-error font-bold">' + atkLabel + '</span>' : '<span class="opacity-40">--</span>'}</td>
-    <td><span style="color:${actionColor}" class="font-bold">${ev.action_name}</span></td>
-    <td class="${ev.reward >= 0 ? 'text-success' : 'text-error'}">${rewStr}</td>
-    <td>${det}%</td>
-  `;
+  // Build cells with textContent (XSS-safe) instead of innerHTML
+  const cells = [
+    { text: time, cls: 'opacity-70' },
+    { text: String(ev.step) },
+    { text: atkLabel, cls: ev.attack_active ? 'text-error font-bold' : 'opacity-40' },
+    { text: ev.action_name || '', cls: 'font-bold', style: `color:${actionColor}` },
+    { text: rewStr, cls: ev.reward >= 0 ? 'text-success' : 'text-error' },
+    { text: `${det}%` },
+  ];
+  cells.forEach(c => {
+    const td = document.createElement('td');
+    td.textContent = c.text;
+    if (c.cls) td.className = c.cls;
+    if (c.style) td.setAttribute('style', c.style);
+    tr.appendChild(td);
+  });
 
   logBody.prepend(tr);
 

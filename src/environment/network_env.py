@@ -587,22 +587,31 @@ class NetworkSecurityEnv(gym.Env):
         tp, fn, fp, tn = 0, 0, 0, 0
 
         if attack:
-            if action in (1, 3):   # BLOCK or RATE_LIMIT
+            if action == 1:        # BLOCK — strongest detection, most disruptive
                 tp, fn, fp, tn = 9, 1, 0, 90
-            elif action == 2:      # REROUTE
+                throughput, latency = 40.0, 10.0
+            elif action == 3:      # RATE_LIMIT — moderate detection, gentler
+                tp, fn, fp, tn = 7, 3, 0, 90
+                throughput, latency = 70.0, 15.0
+            elif action == 2:      # REROUTE — weaker detection, good throughput
                 tp, fn, fp, tn = 6, 4, 0, 90
+                throughput, latency = 65.0, 20.0
             else:                  # ALLOW — missed detection
                 tp, fn, fp, tn = 0, 10, 0, 90
+                throughput, latency = 30.0, 40.0
         else:
-            if action in (1, 3):   # Blocking with no attack → FP
-                tp, fn, fp, tn = 0, 0, 5, 85
-            elif action == 2:
-                tp, fn, fp, tn = 0, 0, 2, 88
+            if action == 1:        # BLOCK during peace — most disruptive FP
+                tp, fn, fp, tn = 0, 0, 15, 75
+                throughput, latency = 50.0, 8.0
+            elif action == 3:      # RATE_LIMIT during peace — moderate FP
+                tp, fn, fp, tn = 0, 0, 8, 82
+                throughput, latency = 80.0, 6.0
+            elif action == 2:      # REROUTE during peace — mild disruption
+                tp, fn, fp, tn = 0, 0, 3, 87
+                throughput, latency = 85.0, 7.0
             else:                  # ALLOW during peace — ideal
                 tp, fn, fp, tn = 0, 0, 0, 90
-
-        throughput = 50.0 if attack else DEFAULT_BASELINE_THROUGHPUT
-        latency = 25.0 if attack else 5.0
+                throughput, latency = DEFAULT_BASELINE_THROUGHPUT, 5.0
 
         return {
             "true_positives": tp,

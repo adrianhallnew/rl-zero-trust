@@ -195,6 +195,9 @@ async def sse_stream(request: Request):
                     event = await asyncio.wait_for(q.get(), timeout=15.0)
                     yield f"data: {json.dumps(event)}\n\n"
                 except asyncio.TimeoutError:
+                    # Check disconnect inside timeout to avoid 15s zombie lag
+                    if await request.is_disconnected():
+                        break
                     # Keep-alive comment to prevent proxy/browser timeout
                     yield ": keepalive\n\n"
         finally:
@@ -335,13 +338,24 @@ async def stop_loop():
 
 @app.get("/export")
 async def export_session():
-    """Download the current session as JSON."""
+    """Download the current session as JSON with full context."""
+    elapsed = None
+    if state.start_time is not None:
+        elapsed = time.time() - state.start_time
+
+    with state._lock:
+        events_copy = list(state.events)
+
     return JSONResponse({
         "exported_at": time.time(),
         "agent": state.agent,
         "mode": state.mode,
+        "running": state.running,
         "total_steps": state.step,
-        "events": state.events,
+        "start_time": state.start_time,
+        "elapsed_seconds": elapsed,
+        "last_event": state.last_event,
+        "events": events_copy,
     })
 
 
@@ -369,14 +383,14 @@ async def get_summary():
 @app.get("/charts/{filepath:path}")
 async def serve_chart(filepath: str):
     """Serve a chart image from results/charts/."""
-    chart_path = _CHARTS_DIR / filepath
-    if not chart_path.exists() or not chart_path.is_file():
-        return JSONResponse({"error": "Chart not found"}, status_code=404)
-    # Security: ensure the resolved path is under _CHARTS_DIR
+    # Security: validate resolved path BEFORE any filesystem access
+    chart_path = (_CHARTS_DIR / filepath).resolve()
     try:
-        chart_path.resolve().relative_to(_CHARTS_DIR.resolve())
+        chart_path.relative_to(_CHARTS_DIR.resolve())
     except ValueError:
         return JSONResponse({"error": "Invalid path"}, status_code=403)
+    if not chart_path.exists() or not chart_path.is_file():
+        return JSONResponse({"error": "Chart not found"}, status_code=404)
     media = "image/png" if chart_path.suffix == ".png" else "image/svg+xml"
     return FileResponse(chart_path, media_type=media)
 

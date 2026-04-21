@@ -100,14 +100,17 @@ class AttackScheduler:
         self,
         scenario: str = "auto",
         schedule: Optional[List] = None,
+        error_callback=None,
     ) -> None:
         self.scenario = scenario
         self.schedule = schedule or ATTACK_SCHEDULE
         self.attack_active = False
         self.attack_type: Optional[str] = None
         self._attack_end_time: Optional[float] = None
+        self._attack_owner: Optional[str] = None  # "auto" or "manual"
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._error_callback = error_callback
         self._processes: List[subprocess.Popen] = []
 
     @property
@@ -120,10 +123,25 @@ class AttackScheduler:
         if self.scenario == "none":
             return
         self._thread = threading.Thread(
-            target=self._run, daemon=True, name="attack-scheduler",
+            target=self._run_safe, daemon=True, name="attack-scheduler",
         )
         self._thread.start()
         logger.info("Attack scheduler started (scenario=%s)", self.scenario)
+
+    def _run_safe(self) -> None:
+        """Wrapper around ``_run`` that catches and reports exceptions."""
+        try:
+            self._run()
+        except Exception as exc:
+            logger.exception("Attack scheduler thread crashed: %s", exc)
+            self.attack_active = False
+            self.attack_type = None
+            self._attack_owner = None
+            if self._error_callback is not None:
+                try:
+                    self._error_callback(str(exc))
+                except Exception:
+                    pass
 
     def stop(self) -> None:
         """Signal the scheduler to stop and kill any running attacks."""
@@ -132,6 +150,7 @@ class AttackScheduler:
         self.attack_active = False
         self.attack_type = None
         self._attack_end_time = None
+        self._attack_owner = None
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
@@ -161,6 +180,7 @@ class AttackScheduler:
         self.attack_active = True
         self.attack_type = attack_type
         self._attack_end_time = time.time() + duration
+        self._attack_owner = "manual"
         self._reap_processes()
 
         if attack_type == "mixed":
@@ -180,6 +200,7 @@ class AttackScheduler:
         self.attack_active = False
         self.attack_type = None
         self._attack_end_time = None
+        self._attack_owner = None
         self._kill_processes()
         logger.info("All attacks stopped")
 
@@ -203,10 +224,27 @@ class AttackScheduler:
         return False
 
     def _kill_processes(self) -> None:
-        """Terminate and clear all tracked attack processes."""
+        """Terminate and clear all tracked attack processes.
+
+        Sends SIGTERM first, waits up to 3 s total for graceful exit,
+        then escalates to SIGKILL for any survivors.
+        """
         for proc in self._processes:
             try:
                 proc.terminate()
+            except OSError:
+                pass
+        # Give processes up to 3 s to exit gracefully
+        deadline = time.time() + 3
+        for proc in self._processes:
+            remaining = max(0, deadline - time.time())
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
             except OSError:
                 pass
         self._processes.clear()
@@ -253,8 +291,11 @@ class AttackScheduler:
         intensity: Optional[str] = None,
     ) -> None:
         """Launch one attack type inside the Mininet container."""
-        self.attack_active = True
-        self.attack_type = attack_type
+        # Only claim ownership if no manual attack is in progress
+        if self._attack_owner != "manual":
+            self._attack_owner = "auto"
+            self.attack_active = True
+            self.attack_type = attack_type
         logger.info("ATTACK START: %s (duration=%ds)", attack_type, duration)
 
         if attack_type == "mixed":
@@ -281,9 +322,17 @@ class AttackScheduler:
                 except OSError:
                     pass
 
-        self.attack_active = False
-        self.attack_type = None
-        logger.info("ATTACK STOP: %s", attack_type)
+        # Only clear state if we still own it (manual attack may have taken over)
+        if self._attack_owner == "auto":
+            self.attack_active = False
+            self.attack_type = None
+            self._attack_owner = None
+            logger.info("ATTACK STOP: %s", attack_type)
+        else:
+            logger.info(
+                "Auto attack %s ended but manual attack owns state — not clearing",
+                attack_type,
+            )
 
     def _docker_exec_attack(
         self,
@@ -310,9 +359,31 @@ class AttackScheduler:
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
             self._processes.append(proc)
+
+            # Monitor for early exit (crash detection) in background
+            def _check_early_exit(p, atype):
+                try:
+                    p.wait(timeout=2)
+                    if p.returncode != 0:
+                        err = p.stderr.read().decode(errors="replace")[:500]
+                        logger.error(
+                            "Attack %s failed (rc=%d): %s",
+                            atype, p.returncode, err,
+                        )
+                except subprocess.TimeoutExpired:
+                    pass  # Still running — good
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=_check_early_exit,
+                args=(proc, attack_type),
+                daemon=True,
+            ).start()
+
             return proc
         except FileNotFoundError:
             logger.warning(
@@ -374,6 +445,7 @@ def run_rl_loop(
     attack_scheduler: AttackScheduler,
     event_callback=None,
     mode: str = "live",
+    no_demo_bias: bool = False,
 ) -> None:
     """Run the RL loop in live or simulation mode.
 
@@ -422,8 +494,8 @@ def run_rl_loop(
     if agent_name == "dqn":
         config = get_hyperparameters("dqn")
         agent = DQNAgent(state_dim=65, config=config)
-        agent.load(DQN_CHECKPOINT)
-        logger.info("DQN agent loaded from %s", DQN_CHECKPOINT)
+        agent.load(DQN_CHECKPOINT, live_mode=True)
+        logger.info("DQN agent loaded from %s (live_mode)", DQN_CHECKPOINT)
     else:
         config = get_hyperparameters("ppo")
         agent = PPOAgent(state_dim=65, action_dim=3, config=config)
@@ -441,6 +513,7 @@ def run_rl_loop(
     print(f"  Ryu API: {RYU_API_URL}  |  Switches: {switches}")
     print(f"{'='*70}\n")
 
+    step_num = 0
     for step_num in range(1, max_steps + 1):
         # Check if manual attack duration has expired
         attack_scheduler.check_expired()
@@ -451,13 +524,17 @@ def run_rl_loop(
             attack_scheduler.attack_type,
         )
 
-        # Select action (with demo bias for DQN to show adaptive behaviour)
+        # Select action (with optional demo bias for DQN)
         if agent_name == "dqn":
             q_values = agent.get_q_values(obs)
-            atk_type = attack_scheduler.attack_type
-            bias = DEMO_ACTION_BIAS.get(atk_type, DEMO_ACTION_BIAS[None])
-            biased = q_values + bias
-            action = int(np.argmax(biased))
+            if no_demo_bias:
+                action = int(np.argmax(q_values))
+            else:
+                atk_type = attack_scheduler.attack_type
+                bias = DEMO_ACTION_BIAS.get(atk_type, DEMO_ACTION_BIAS[None])
+                biased = q_values + bias
+                action = int(np.argmax(biased))
+                logger.debug("Demo bias applied: %s -> action %d", atk_type, action)
             continuous_action = None
         else:
             action, _log_prob, _value = agent.select_action(
@@ -610,6 +687,11 @@ def parse_args() -> argparse.Namespace:
         help="Attack scenario (default: none)",
     )
     parser.add_argument(
+        "--no-demo-bias",
+        action="store_true",
+        help="Disable Q-value bias — evaluate true agent policy",
+    )
+    parser.add_argument(
         "--no-dashboard",
         action="store_true",
         help="Run without the web dashboard (console only)",
@@ -644,6 +726,7 @@ def main() -> None:
                 max_steps=args.steps,
                 step_interval=args.step_interval,
                 attack_scheduler=scheduler,
+                no_demo_bias=args.no_demo_bias,
             )
         except KeyboardInterrupt:
             pass
@@ -668,7 +751,17 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
     state.start_time = time.time()
 
     # Scheduler — created once, can be replaced on agent switch
-    scheduler = AttackScheduler(scenario=args.scenario)
+    def _scheduler_error(msg):
+        state.publish_sync({
+            "type": "toast", "level": "error",
+            "message": f"Scheduler crashed: {msg}",
+            "timestamp": time.time(),
+        })
+
+    scheduler = AttackScheduler(
+        scenario=args.scenario,
+        error_callback=_scheduler_error,
+    )
 
     # Flag to signal the RL thread to stop
     loop_stop = threading.Event()
@@ -683,6 +776,8 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
         while not loop_stop.is_set():
             # Wait for start signal (or start immediately if already requested)
             if not state.running:
+                # Expire manual attacks even when RL loop is idle
+                scheduler.check_expired()
                 # Auto-restart if an agent or mode switch is pending
                 has_pending = (
                     state.requested_start
@@ -747,6 +842,7 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
                     attack_scheduler=scheduler_for_loop,
                     event_callback=_dashboard_callback,
                     mode=current_mode,
+                    no_demo_bias=args.no_demo_bias,
                 )
             except KeyboardInterrupt:
                 logger.info("RL loop interrupted (agent/mode switch or stop)")
@@ -792,7 +888,9 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
         if state.requested_auto_scenario:
             state.requested_auto_scenario = False
             scheduler.stop()
-            scheduler = AttackScheduler(scenario="auto")
+            scheduler = AttackScheduler(
+                scenario="auto", error_callback=_scheduler_error,
+            )
             scheduler.start()
             logger.info("Auto scenario started mid-loop")
 

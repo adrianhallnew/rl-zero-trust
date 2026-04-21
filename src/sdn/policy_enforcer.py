@@ -67,6 +67,8 @@ class PolicyEnforcer:
         self.rate_limit_fraction = rate_limit_bw_fraction
         self.policy_change_count = 0
         self._action_log: List[Dict[str, Any]] = []
+        self._reroute_index: int = 0
+        self._queue_validated: Dict[int, bool] = {}
         logger.info("PolicyEnforcer initialized (API: %s)", self.api_url)
 
     # ------------------------------------------------------------------
@@ -145,12 +147,21 @@ class PolicyEnforcer:
         return success
 
     def _enforce_allow(self, dpid: int, match_fields: Dict[str, Any]) -> bool:
-        """Remove any blocking rules for the matching traffic.
+        """Remove restrictive rules and install a permissive forwarding rule.
 
-        ALLOW means we delete previously installed security rules so
-        that the default L2 forwarding takes over.
+        Deletes any security rules (BLOCK, RATE_LIMIT, REROUTE), then
+        installs an explicit NORMAL output rule at lower priority to
+        avoid falling through to table-miss (which would send every
+        packet to the controller, causing CPU overload under load).
         """
-        return self._delete_flow(dpid, match_fields)
+        self._delete_flow(dpid, match_fields)
+        flow_entry = self._build_flow_entry(
+            dpid=dpid,
+            match=match_fields,
+            actions=[{"type": "OUTPUT", "port": "NORMAL"}],
+            priority=PRIORITY_SECURITY - 10,
+        )
+        return self._add_flow(flow_entry)
 
     def _enforce_block(self, dpid: int, match_fields: Dict[str, Any]) -> bool:
         """Install a high-priority drop rule.
@@ -190,7 +201,17 @@ class PolicyEnforcer:
         Uses OpenFlow SET_QUEUE to push matching traffic into a
         bandwidth-limited queue. Queue 1 is pre-configured for 50%
         throughput in the Mininet topology.
+
+        If queue validation fails, falls back to REROUTE so the
+        action still has a real effect on the network.
         """
+        if not self._validate_queue(dpid, queue_id=1):
+            logger.warning(
+                "Queue 1 unavailable on switch %d — falling back to REROUTE",
+                dpid,
+            )
+            return self._enforce_reroute(dpid, match_fields)
+
         flow_entry = self._build_flow_entry(
             dpid=dpid,
             match=match_fields,
@@ -201,6 +222,45 @@ class PolicyEnforcer:
             priority=PRIORITY_SECURITY,
         )
         return self._add_flow(flow_entry)
+
+    def _validate_queue(self, dpid: int, queue_id: int = 1) -> bool:
+        """Check if a queue is configured on a switch.
+
+        Results are cached per-dpid to avoid repeated API calls.
+
+        Args:
+            dpid: Switch datapath ID.
+            queue_id: Queue ID to check.
+
+        Returns:
+            True if the queue exists.
+        """
+        if dpid in self._queue_validated:
+            return self._queue_validated[dpid]
+
+        try:
+            url = f"{self.api_url}/qos/queue/{dpid}"
+            resp = requests.get(url, timeout=3)
+            if resp.status_code == 200:
+                queues = resp.json()
+                valid = any(
+                    q.get("queue_id") == queue_id
+                    for q in (queues if isinstance(queues, list) else [])
+                )
+            else:
+                # Ryu QoS REST API not available — assume queue exists
+                # (common when using simple_switch_13 without qos module)
+                valid = True
+        except Exception:
+            # Can't verify — assume queue exists to avoid unnecessary fallbacks
+            valid = True
+
+        self._queue_validated[dpid] = valid
+        if not valid:
+            logger.warning(
+                "Queue %d not configured on switch %d", queue_id, dpid,
+            )
+        return valid
 
     # ------------------------------------------------------------------
     # REST API Helpers
@@ -290,12 +350,12 @@ class PolicyEnforcer:
             logger.error("Failed to delete flow: %s", e)
             return False
 
-    @staticmethod
-    def _pick_reroute_port(dpid: int) -> int:
+    def _pick_reroute_port(self, dpid: int) -> int:
         """Select an alternative output port for rerouting.
 
-        For the core switch (dpid=1), cycle through edge ports 2-4.
-        For edge switches, send to the core (port 1).
+        For the core switch (dpid=1), cycle through edge ports 2-4
+        to provide actual path diversity. For edge switches, send to
+        the core (port 1).
 
         Args:
             dpid: Switch datapath ID.
@@ -304,8 +364,11 @@ class PolicyEnforcer:
             Alternative output port number.
         """
         if dpid == 1:
-            # Core switch: pick port 2 as a default reroute path
-            return 2
+            # Core switch: cycle through edge ports for path diversity
+            ports = [2, 3, 4]
+            port = ports[self._reroute_index % len(ports)]
+            self._reroute_index += 1
+            return port
         # Edge switches: uplink to core is always port 1
         return 1
 
