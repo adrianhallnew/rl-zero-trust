@@ -231,7 +231,7 @@ class TestF1_5_NoDemoBias:
         q = np.array([1.0, 1.0, 1.0, 1.0])
         bias = DEMO_ACTION_BIAS["ddos"]
         biased = q + bias
-        assert np.argmax(biased) == 1  # BLOCK has highest bias for ddos
+        assert np.argmax(biased) == 3  # RATE_LIMIT has highest bias for ddos
 
 
 # ---------------------------------------------------------------------------

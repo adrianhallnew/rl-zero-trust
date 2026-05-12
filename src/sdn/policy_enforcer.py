@@ -318,7 +318,12 @@ class PolicyEnforcer:
             logger.debug("Flow added: dpid=%d", flow_entry["dpid"])
             return True
         except requests.RequestException as e:
-            logger.error("Failed to add flow: %s", e)
+            logger.error(
+                "Failed to add flow (url=%s, dpid=%d, status=%s): %s",
+                url, flow_entry.get("dpid", 0),
+                getattr(getattr(e, "response", None), "status_code", "N/A"),
+                e,
+            )
             return False
 
     def _delete_flow(self, dpid: int, match_fields: Dict[str, Any]) -> bool:
@@ -347,7 +352,12 @@ class PolicyEnforcer:
             logger.debug("Flow deleted: dpid=%d, match=%s", dpid, match_fields)
             return True
         except requests.RequestException as e:
-            logger.error("Failed to delete flow: %s", e)
+            logger.error(
+                "Failed to delete flow (url=%s, dpid=%d, status=%s): %s",
+                url, dpid,
+                getattr(getattr(e, "response", None), "status_code", "N/A"),
+                e,
+            )
             return False
 
     def _pick_reroute_port(self, dpid: int) -> int:

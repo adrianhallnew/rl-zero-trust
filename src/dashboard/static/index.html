@@ -16,6 +16,9 @@
   <script src="vendor/js/chart.umd.min.js"></script>
   <!-- D3.js 7 (local) -->
   <script src="vendor/js/d3.min.js"></script>
+  <!-- jsPDF + autoTable (local) -->
+  <script src="vendor/js/jspdf.umd.min.js"></script>
+  <script src="vendor/js/jspdf.plugin.autotable.min.js"></script>
   <!-- JetBrains Mono (local) -->
   <link href="vendor/css/jetbrains-mono.css" rel="stylesheet" />
 
@@ -124,6 +127,9 @@
   <button id="btn-export" class="btn btn-sm btn-ghost gap-1" title="Export session JSON">
     <i class="fa-solid fa-download"></i>
   </button>
+  <button id="btn-export-pdf" class="btn btn-sm btn-ghost gap-1" title="Export session PDF">
+    <i class="fa-solid fa-file-pdf"></i>
+  </button>
 </div>
 
 <!-- ================================================================== -->
@@ -133,11 +139,14 @@
   <a class="tab tab-active" data-tab="live">
     <i class="fa-solid fa-tower-broadcast mr-1"></i> Live Monitor
   </a>
+  <a class="tab" data-tab="network">
+    <i class="fa-solid fa-network-wired mr-1"></i> Network & Policy
+  </a>
+  <a class="tab" data-tab="comparison">
+    <i class="fa-solid fa-scale-balanced mr-1"></i> DQN vs PPO
+  </a>
   <a class="tab" data-tab="training">
     <i class="fa-solid fa-chart-line mr-1"></i> Training Results
-  </a>
-  <a class="tab" data-tab="system">
-    <i class="fa-solid fa-diagram-project mr-1"></i> System Overview
   </a>
 </div>
 
@@ -187,6 +196,31 @@
       </div>
       <div class="stat-desc" id="stat-action"></div>
       <div class="stat-desc text-warning font-bold" id="stat-countdown"></div>
+    </div>
+  </div>
+
+  <!-- ── Policy Decision Explainability (Item 8) ───────────────── -->
+  <div id="explain-card" class="card bg-base-100 shadow">
+    <div class="card-body p-3">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-brain mr-1"></i> Policy Decision
+        <span id="explain-match" class="ml-2 badge badge-sm badge-ghost">--</span>
+      </h3>
+      <div class="flex items-start gap-3 mt-1">
+        <div class="flex-1">
+          <div class="text-sm">
+            <span class="opacity-70">Attack:</span>
+            <span id="explain-attack" class="font-bold">--</span>
+            <span class="mx-1 opacity-30">&rarr;</span>
+            <span class="opacity-70">Action:</span>
+            <span id="explain-action" class="font-bold">--</span>
+          </div>
+          <p id="explain-text" class="text-xs opacity-70 mt-1">Waiting for data...</p>
+        </div>
+        <div id="explain-optimal" class="text-xs opacity-70 text-right">
+          Optimal: <span id="explain-optimal-action" class="font-bold">--</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -288,6 +322,24 @@
             <div class="bg-error/20 rounded p-2"><div class="opacity-70">FP</div><div class="text-lg font-bold text-error" id="cm-fp">0</div></div>
             <div class="bg-error/20 rounded p-2"><div class="opacity-70">FN</div><div class="text-lg font-bold text-warning" id="cm-fn">0</div></div>
             <div class="bg-success/20 rounded p-2"><div class="opacity-70">TN</div><div class="text-lg font-bold text-info" id="cm-tn">0</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Distribution (Item 7) -->
+      <div class="card bg-base-100 shadow">
+        <div class="card-body p-3">
+          <h3 class="card-title text-sm">
+            <i class="fa-solid fa-chart-pie mr-1"></i> Action Distribution
+          </h3>
+          <div class="chart-container" style="height:140px;">
+            <canvas id="action-dist-chart"></canvas>
+          </div>
+          <div class="grid grid-cols-4 gap-1 mt-1 text-center text-xs font-mono">
+            <div><span style="color:var(--clr-allow)">ALLOW</span><br><span id="ad-allow">0</span></div>
+            <div><span style="color:var(--clr-block)">BLOCK</span><br><span id="ad-block">0</span></div>
+            <div><span style="color:var(--clr-reroute)">REROUTE</span><br><span id="ad-reroute">0</span></div>
+            <div><span style="color:var(--clr-ratelimit)">RATE_LIM</span><br><span id="ad-ratelimit">0</span></div>
           </div>
         </div>
       </div>
@@ -438,16 +490,19 @@
 </div>
 
 <!-- ================================================================== -->
-<!-- TAB: SYSTEM OVERVIEW (Phase D)                                     -->
+<!-- TAB: NETWORK & POLICY                                              -->
 <!-- ================================================================== -->
-<div id="tab-system" class="tab-panel p-4 space-y-4 hidden">
+<div id="tab-network" class="tab-panel p-4 space-y-4 hidden">
 
-  <!-- ── Architecture Diagram ────────────────────────────────────────── -->
-  <div class="card bg-base-100 shadow">
-    <div class="card-body p-4">
+  <!-- ── Architecture Diagram (collapsible) ─────────────────────────── -->
+  <details class="card bg-base-100 shadow">
+    <summary class="card-body p-4 cursor-pointer select-none">
       <h3 class="card-title text-sm">
         <i class="fa-solid fa-diagram-project mr-1"></i> Docker Stack Architecture
+        <i class="fa-solid fa-chevron-down ml-auto text-xs opacity-50"></i>
       </h3>
+    </summary>
+    <div class="px-4 pb-4">
       <div class="flex justify-center mt-2">
         <svg id="arch-diagram" viewBox="0 0 800 420" class="w-full max-w-3xl" style="height:380px;">
           <defs>
@@ -456,77 +511,49 @@
             <filter id="glow-arch-purple"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
             <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6Z" fill="#6b7280"/></marker>
           </defs>
-
-          <!-- Browser -->
           <rect x="280" y="10" width="240" height="44" rx="6" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
           <text x="400" y="28" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan><tspan fill="#3b82f6">&#xf268; </tspan>Browser — localhost:5000</tspan></text>
           <text x="400" y="43" text-anchor="middle" fill="#9ca3af" font-size="9">SSE stream + REST controls</text>
-
-          <!-- Arrow: Browser -> FastAPI -->
           <line x1="400" y1="54" x2="400" y2="78" stroke="#6b7280" stroke-width="1" marker-end="url(#arrowhead)"/>
           <text x="412" y="70" fill="#9ca3af" font-size="8">SSE / POST</text>
-
-          <!-- FastAPI Dashboard -->
           <rect x="240" y="80" width="320" height="44" rx="6" fill="#1e293b" stroke="#22c55e" stroke-width="1.5" filter="url(#glow-arch-green)"/>
           <text x="400" y="98" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan fill="#22c55e">&#xf013; </tspan>FastAPI Dashboard Server (host:5000)</text>
           <text x="400" y="113" text-anchor="middle" fill="#9ca3af" font-size="9">DashboardState + DemoEventBus + SSE</text>
-
-          <!-- Arrow: FastAPI -> RL Loop -->
           <line x1="400" y1="124" x2="400" y2="148" stroke="#6b7280" stroke-width="1" marker-end="url(#arrowhead)"/>
           <text x="412" y="140" fill="#9ca3af" font-size="8">asyncio Queue</text>
-
-          <!-- RL Loop -->
           <rect x="240" y="150" width="320" height="44" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
           <text x="400" y="168" text-anchor="middle" fill="#e5e7eb" font-size="11" font-weight="600"><tspan fill="#f59e0b">&#xf544; </tspan>live_demo.py — RL Loop Thread (host)</text>
           <text x="400" y="183" text-anchor="middle" fill="#9ca3af" font-size="9">DQN/PPO Agent + StatsCollector + PolicyEnforcer + AttackScheduler</text>
-
-          <!-- Docker boundary -->
           <rect x="30" y="220" width="740" height="185" rx="8" fill="none" stroke="#3b82f6" stroke-width="1" stroke-dasharray="6 3" opacity="0.5"/>
           <text x="50" y="238" fill="#3b82f6" font-size="10" opacity="0.7"><tspan>&#xf4b7;</tspan> Docker Stack (WSL2) — 172.20.0.0/24</text>
-
-          <!-- OpenZiti Controller -->
           <rect x="50" y="252" width="155" height="56" rx="5" fill="#1e293b" stroke="#a78bfa" stroke-width="1.2" filter="url(#glow-arch-purple)"/>
           <text x="127" y="270" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">OpenZiti Controller</text>
           <text x="127" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.10:1280</text>
           <text x="127" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">mTLS + Identity Mgmt</text>
-
-          <!-- Ryu Controller -->
           <rect x="225" y="252" width="155" height="56" rx="5" fill="#1e293b" stroke="#3b82f6" stroke-width="1.2" filter="url(#glow-arch-blue)"/>
           <text x="302" y="270" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="600">Ryu SDN Controller</text>
           <text x="302" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.20:8080/6633</text>
           <text x="302" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">OpenFlow 1.3 REST API</text>
-
-          <!-- Mininet -->
           <rect x="400" y="252" width="185" height="56" rx="5" fill="#1e293b" stroke="#22c55e" stroke-width="1.2" filter="url(#glow-arch-green)"/>
           <text x="492" y="270" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600">Mininet (privileged)</text>
           <text x="492" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.30 | 5 OVS + 15 hosts</text>
           <text x="492" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">Scapy attacks + iPerf3</text>
-
-          <!-- RL Agent Container -->
           <rect x="605" y="252" width="150" height="56" rx="5" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2"/>
           <text x="680" y="270" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="600">RL Agent Container</text>
           <text x="680" y="284" text-anchor="middle" fill="#9ca3af" font-size="8">172.20.0.40</text>
           <text x="680" y="297" text-anchor="middle" fill="#9ca3af" font-size="8">TF 2.x + Checkpoints</text>
-
-          <!-- Arrows from RL loop to Docker -->
           <line x1="340" y1="194" x2="302" y2="250" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrowhead)"/>
           <text x="305" y="222" fill="#3b82f6" font-size="8">REST :8080</text>
           <line x1="460" y1="194" x2="492" y2="250" stroke="#22c55e" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrowhead)"/>
           <text x="465" y="222" fill="#22c55e" font-size="8">docker exec</text>
-
-          <!-- Internal Docker links -->
           <line x1="380" y1="280" x2="400" y2="280" stroke="#6b7280" stroke-width="0.8" marker-end="url(#arrowhead)"/>
           <text x="388" y="322" text-anchor="middle" fill="#6b7280" font-size="7">OF 1.3</text>
           <line x1="302" y1="308" x2="302" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
           <line x1="127" y1="308" x2="127" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
           <line x1="492" y1="308" x2="492" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
           <line x1="680" y1="308" x2="680" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
-
-          <!-- mTLS overlay line -->
           <line x1="127" y1="340" x2="680" y2="340" stroke="#a78bfa" stroke-width="0.8" stroke-dasharray="3 2"/>
           <text x="400" y="355" text-anchor="middle" fill="#a78bfa" font-size="8" opacity="0.8">OpenZiti mTLS mesh (identity-verified dark services)</text>
-
-          <!-- Legend -->
           <g transform="translate(50,375)">
             <line x1="0" y1="0" x2="20" y2="0" stroke="#3b82f6" stroke-width="1.5"/><text x="25" y="4" fill="#9ca3af" font-size="8">REST API</text>
             <line x1="100" y1="0" x2="120" y2="0" stroke="#22c55e" stroke-width="1.5"/><text x="125" y="4" fill="#9ca3af" font-size="8">Docker exec</text>
@@ -536,7 +563,7 @@
         </svg>
       </div>
     </div>
-  </div>
+  </details>
 
   <!-- ── Two-column: Reward Formula + Network Specs ──────────────────── -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -627,63 +654,6 @@
 
   </div>
 
-  <!-- ── DQN vs PPO Comparison ───────────────────────────────────────── -->
-  <div class="card bg-base-100 shadow">
-    <div class="card-body p-4">
-      <h3 class="card-title text-sm">
-        <i class="fa-solid fa-scale-balanced mr-1"></i> DQN vs PPO Comparison
-      </h3>
-      <div class="overflow-x-auto mt-2">
-        <table class="table table-xs table-zebra">
-          <thead><tr><th>Property</th><th class="text-info">DQN</th><th class="text-secondary">PPO</th></tr></thead>
-          <tbody id="comparison-body">
-            <tr><td class="opacity-70">Architecture</td><td class="font-mono">Q-Network (MLP)</td><td class="font-mono">Actor-Critic (MLP)</td></tr>
-            <tr><td class="opacity-70">Action Space</td><td class="font-mono">Discrete (4)</td><td class="font-mono">Continuous (3)</td></tr>
-            <tr><td class="opacity-70">Algorithm</td><td class="font-mono">Off-policy (replay)</td><td class="font-mono">On-policy (PPO-Clip)</td></tr>
-            <tr><td class="opacity-70">Exploration</td><td class="font-mono">Epsilon-greedy</td><td class="font-mono">Gaussian noise</td></tr>
-            <tr id="cmp-episodes"><td class="opacity-70">Training Episodes</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
-            <tr id="cmp-reward"><td class="opacity-70">Avg Reward</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
-            <tr id="cmp-detection"><td class="opacity-70">Detection Rate</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
-            <tr id="cmp-fpr"><td class="opacity-70">False Positive Rate</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Agent Configuration ─────────────────────────────────────────── -->
-  <div class="card bg-base-100 shadow">
-    <div class="card-body p-4">
-      <h3 class="card-title text-sm">
-        <i class="fa-solid fa-gears mr-1"></i> Agent Hyperparameters
-        <button id="btn-refresh-config" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
-          <i class="fa-solid fa-rotate"></i>
-        </button>
-      </h3>
-      <div id="config-loading" class="flex items-center justify-center py-8 opacity-50">
-        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading configuration...
-      </div>
-      <div id="config-tables" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2 hidden">
-        <!-- DQN Config -->
-        <div>
-          <h4 class="text-xs font-bold text-info mb-2"><i class="fa-solid fa-brain mr-1"></i> DQN (Deep Q-Network)</h4>
-          <table class="table table-xs">
-            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
-            <tbody id="config-dqn-body"></tbody>
-          </table>
-        </div>
-        <!-- PPO Config -->
-        <div>
-          <h4 class="text-xs font-bold text-secondary mb-2"><i class="fa-solid fa-brain mr-1"></i> PPO (Proximal Policy Optimization)</h4>
-          <table class="table table-xs">
-            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
-            <tbody id="config-ppo-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- ── OpenZiti Zero-Trust Layer ───────────────────────────────────── -->
   <div class="card bg-base-100 shadow">
     <div class="card-body p-4">
@@ -707,7 +677,91 @@
     </div>
   </div>
 
-  <!-- ── Live OpenFlow Policy Rules ──────────────────────────────────── -->
+  <!-- ── Network Device Inventory ────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-network-wired mr-1"></i> Network Device Inventory
+        <button id="btn-refresh-devices" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </h3>
+      <div id="devices-loading" class="flex items-center justify-center py-6 opacity-50">
+        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading devices...
+      </div>
+      <div id="devices-table-wrap" class="overflow-x-auto mt-2 hidden">
+        <table class="table table-xs table-zebra">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Type</th>
+              <th>Role</th>
+              <th>IP Address</th>
+              <th>MAC</th>
+              <th>Connected To</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="devices-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ZTA Baseline Policies (Before RL) ─────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-shield-halved mr-1 text-info"></i> ZTA Baseline Policies (Before RL)
+        <span class="badge badge-info badge-sm ml-2">Static</span>
+      </h3>
+      <p class="text-xs opacity-60 mt-1">Default OpenFlow rules installed by ZeroTrustSwitch — the network posture before any RL agent actions.</p>
+      <div id="zta-baseline-loading" class="flex items-center justify-center py-6 opacity-50">
+        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading ZTA baseline...
+      </div>
+      <div id="zta-baseline-wrap" class="mt-3 hidden">
+        <div id="zta-baseline-body" class="space-y-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RL-Installed Rules (After RL) ──────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-robot mr-1 text-warning"></i> RL-Installed Rules (After RL)
+        <span class="badge badge-warning badge-sm ml-2">Dynamic</span>
+        <button id="btn-refresh-rl-rules" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </h3>
+      <p class="text-xs opacity-60 mt-1">OpenFlow rules installed by the RL agent in response to network conditions and attacks.</p>
+      <div id="rl-rules-empty" class="flex items-center justify-center py-8 opacity-50">
+        <div class="text-center">
+          <i class="fa-solid fa-robot text-3xl mb-2 opacity-30"></i>
+          <div class="text-xs">No RL rules installed yet — start an episode to see agent decisions</div>
+        </div>
+      </div>
+      <div id="rl-rules-wrap" class="overflow-x-auto mt-2 hidden">
+        <table class="table table-xs">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Action</th>
+              <th>Attack</th>
+              <th>Priority</th>
+              <th>Match</th>
+              <th>Actions</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody id="rl-rules-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Live OpenFlow Policy Rules + Baseline Diff ──────────────────── -->
   <div class="card bg-base-100 shadow">
     <div class="card-body p-4">
       <h3 class="card-title text-sm">
@@ -720,6 +774,12 @@
             <option value="4">Switch 4</option>
             <option value="5">Switch 5</option>
           </select>
+          <button id="btn-capture-baseline" class="btn btn-xs btn-outline btn-info" title="Capture current flows as baseline">
+            <i class="fa-solid fa-camera mr-1"></i> Capture Baseline
+          </button>
+          <button id="btn-show-diff" class="btn btn-xs btn-outline btn-warning hidden" title="Show diff against baseline">
+            <i class="fa-solid fa-code-compare mr-1"></i> Show Diff
+          </button>
           <button id="btn-refresh-flows" class="btn btn-xs btn-ghost opacity-50 hover:opacity-100" title="Refresh">
             <i class="fa-solid fa-rotate"></i>
           </button>
@@ -749,6 +809,102 @@
       </div>
       <div id="flows-empty" class="flex items-center justify-center py-6 opacity-50 hidden">
         <i class="fa-solid fa-inbox mr-2"></i> No flow rules found for this switch
+      </div>
+      <!-- Flow Diff View -->
+      <div id="flows-diff-wrap" class="mt-4 hidden">
+        <h4 class="text-xs font-bold mb-2"><i class="fa-solid fa-code-compare mr-1 text-warning"></i> Flow Diff (vs Baseline)</h4>
+        <div id="flows-diff-body" class="overflow-x-auto"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ================================================================== -->
+<!-- TAB: DQN vs PPO COMPARISON                                         -->
+<!-- ================================================================== -->
+<div id="tab-comparison" class="tab-panel p-4 space-y-4 hidden">
+
+  <!-- ── DQN vs PPO Training Comparison ─────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-scale-balanced mr-1"></i> DQN vs PPO — Training Results
+      </h3>
+      <div class="overflow-x-auto mt-2">
+        <table class="table table-xs table-zebra">
+          <thead><tr><th>Property</th><th class="text-info">DQN</th><th class="text-secondary">PPO</th></tr></thead>
+          <tbody id="comparison-body">
+            <tr><td class="opacity-70">Architecture</td><td class="font-mono">Q-Network (MLP)</td><td class="font-mono">Actor-Critic (MLP)</td></tr>
+            <tr><td class="opacity-70">Action Space</td><td class="font-mono">Discrete (4)</td><td class="font-mono">Continuous (3)</td></tr>
+            <tr><td class="opacity-70">Algorithm</td><td class="font-mono">Off-policy (replay)</td><td class="font-mono">On-policy (PPO-Clip)</td></tr>
+            <tr><td class="opacity-70">Exploration</td><td class="font-mono">Epsilon-greedy</td><td class="font-mono">Gaussian noise</td></tr>
+            <tr id="cmp-episodes"><td class="opacity-70">Training Episodes</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
+            <tr id="cmp-reward"><td class="opacity-70">Avg Reward</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
+            <tr id="cmp-detection"><td class="opacity-70">Detection Rate</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
+            <tr id="cmp-fpr"><td class="opacity-70">False Positive Rate</td><td class="font-mono">--</td><td class="font-mono">--</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Live Session Comparison ─────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-chart-column mr-1"></i> Live Session Comparison
+        <button id="btn-refresh-sessions" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </h3>
+      <div id="sessions-empty" class="flex items-center justify-center py-6 opacity-50">
+        <i class="fa-solid fa-hourglass-start mr-2"></i> Run both agents to compare live sessions
+      </div>
+      <div id="sessions-table-wrap" class="hidden">
+        <div class="overflow-x-auto mt-2">
+          <table class="table table-xs table-zebra">
+            <thead><tr><th>Metric</th><th class="text-info">DQN</th><th class="text-secondary">PPO</th></tr></thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+        </div>
+        <div class="mt-4">
+          <h4 class="text-xs font-bold mb-2">Action Distribution</h4>
+          <div style="height:200px; max-width:500px; margin:0 auto;">
+            <canvas id="chart-session-actions"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Agent Configuration ─────────────────────────────────────────── -->
+  <div class="card bg-base-100 shadow">
+    <div class="card-body p-4">
+      <h3 class="card-title text-sm">
+        <i class="fa-solid fa-gears mr-1"></i> Agent Hyperparameters
+        <button id="btn-refresh-config" class="btn btn-xs btn-ghost ml-auto opacity-50 hover:opacity-100" title="Refresh">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </h3>
+      <div id="config-loading" class="flex items-center justify-center py-8 opacity-50">
+        <i class="fa-solid fa-spinner fa-spin mr-2"></i> Loading configuration...
+      </div>
+      <div id="config-tables" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2 hidden">
+        <div>
+          <h4 class="text-xs font-bold text-info mb-2"><i class="fa-solid fa-brain mr-1"></i> DQN (Deep Q-Network)</h4>
+          <table class="table table-xs">
+            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
+            <tbody id="config-dqn-body"></tbody>
+          </table>
+        </div>
+        <div>
+          <h4 class="text-xs font-bold text-secondary mb-2"><i class="fa-solid fa-brain mr-1"></i> PPO (Proximal Policy Optimization)</h4>
+          <table class="table table-xs">
+            <thead><tr><th>Parameter</th><th class="text-right">Value</th></tr></thead>
+            <tbody id="config-ppo-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -863,7 +1019,7 @@ function handleEvent(event) {
       document.getElementById('nav-step').textContent = event.step;
       lastStepEvent = event;
       // Update reward formula on System Overview tab if visible
-      if (!document.getElementById('tab-system').classList.contains('hidden')) {
+      if (!document.getElementById('tab-network').classList.contains('hidden')) {
         updateRewardFormula();
       }
       break;
@@ -1596,6 +1752,78 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   showToast('success', 'Session exported');
 });
 
+// ── PDF Export ───────────────────────────────────────────────────
+document.getElementById('btn-export-pdf').addEventListener('click', async () => {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const agent = currentAgent.toUpperCase();
+
+  doc.setFontSize(16);
+  doc.text('RL Zero-Trust Network Security — Session Report', 14, 20);
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(`Generated: ${ts} | Agent: ${agent}`, 14, 28);
+  doc.setTextColor(0);
+
+  // KPI summary
+  const ev = lastStepEvent;
+  if (ev) {
+    const m = ev.metrics || {};
+    doc.autoTable({
+      startY: 35,
+      head: [['KPI', 'Value']],
+      body: [
+        ['Step', ev.step || 0],
+        ['Reward', (ev.reward || 0).toFixed(4)],
+        ['Cumulative Reward', (ev.cumulative_reward || 0).toFixed(4)],
+        ['Detection Rate', ((m.detection_rate || 0) * 100).toFixed(1) + '%'],
+        ['False Positive Rate', ((m.false_positive_rate || 0) * 100).toFixed(2) + '%'],
+        ['Throughput (Mbps)', (m.throughput_mbps || 0).toFixed(1)],
+        ['Latency (ms)', (m.latency_ms || 0).toFixed(1)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [30, 41, 59] },
+      styles: { fontSize: 9 },
+    });
+  }
+
+  // Action distribution
+  const totalActions = actionDistCounts[0] + actionDistCounts[1] + actionDistCounts[2] + actionDistCounts[3];
+  if (totalActions > 0) {
+    const pct = a => ((actionDistCounts[a] / totalActions) * 100).toFixed(1) + '%';
+    doc.autoTable({
+      startY: doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : 100,
+      head: [['Action', 'Count', 'Percentage']],
+      body: [
+        ['ALLOW', actionDistCounts[0], pct(0)],
+        ['BLOCK', actionDistCounts[1], pct(1)],
+        ['REROUTE', actionDistCounts[2], pct(2)],
+        ['RATE_LIMIT', actionDistCounts[3], pct(3)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [30, 41, 59] },
+      styles: { fontSize: 9 },
+    });
+  }
+
+  // Reward timeline chart snapshot
+  const rewardCanvas = document.getElementById('reward-timeline-chart');
+  if (rewardCanvas) {
+    const imgData = rewardCanvas.toDataURL('image/png');
+    const y = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : 150;
+    if (y + 60 > 280) doc.addPage();
+    const finalY = y + 60 > 280 ? 20 : y;
+    doc.setFontSize(10);
+    doc.text('Reward Timeline', 14, finalY);
+    doc.addImage(imgData, 'PNG', 14, finalY + 3, 180, 55);
+  }
+
+  const fname = `rl-zerotrust-${agent.toLowerCase()}-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.pdf`;
+  doc.save(fname);
+  showToast('success', 'PDF exported');
+});
+
 // PPO panel visibility
 togglePPOPanel();
 
@@ -1752,10 +1980,17 @@ document.querySelectorAll('[data-tab]').forEach(tab => {
       loadSummary();
       loadCharts();
     }
-    if (tab.dataset.tab === 'system') {
-      loadConfig();
+    if (tab.dataset.tab === 'network') {
       loadFlows();
+      loadDevices();
+      loadZTABaseline();
+      loadRLRules();
       updateRewardFormula();
+    }
+    if (tab.dataset.tab === 'comparison') {
+      loadConfig();
+      loadComparison();
+      loadSessionComparison();
     }
   });
 });
@@ -1928,12 +2163,344 @@ document.getElementById('flows-dpid').addEventListener('change', () => {
   loadFlows();
 });
 
-// Auto-refresh flows every 5s when System tab is visible
+// Auto-refresh flows every 5s when Network tab is visible
 setInterval(() => {
-  if (!document.getElementById('tab-system').classList.contains('hidden')) {
+  if (!document.getElementById('tab-network').classList.contains('hidden')) {
     loadFlows();
   }
 }, 5000);
+
+// ── Network Device Inventory ─────────────────────────────────────
+async function loadDevices() {
+  const loading = document.getElementById('devices-loading');
+  const tableWrap = document.getElementById('devices-table-wrap');
+  loading.classList.remove('hidden');
+  tableWrap.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/devices');
+    const data = await resp.json();
+    const devices = data.devices || [];
+    loading.classList.add('hidden');
+
+    const tbody = document.getElementById('devices-body');
+    let html = '';
+    devices.forEach(d => {
+      const typeIcon = d.type === 'switch'
+        ? '<i class="fa-solid fa-shuffle text-blue-400"></i>'
+        : '<i class="fa-solid fa-desktop text-green-400"></i>';
+      const statusBadge = d.status === 'active'
+        ? '<span class="badge badge-success badge-xs">active</span>'
+        : '<span class="badge badge-ghost badge-xs">idle</span>';
+      html += `<tr>
+        <td class="font-mono text-xs">${d.id}</td>
+        <td>${typeIcon} ${d.type}</td>
+        <td class="text-xs">${d.role}</td>
+        <td class="font-mono text-xs">${d.ip}</td>
+        <td class="font-mono text-xs">${d.mac}</td>
+        <td class="text-xs">${d.switch || '--'}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+    tableWrap.classList.remove('hidden');
+  } catch (err) {
+    loading.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-2 text-error"></i> ${err.message}`;
+  }
+}
+
+document.getElementById('btn-refresh-devices').addEventListener('click', () => {
+  loadDevices();
+  showToast('info', 'Device inventory refreshed');
+});
+
+// ── ZTA Baseline Policies ────────────────────────────────────────
+async function loadZTABaseline() {
+  const loading = document.getElementById('zta-baseline-loading');
+  const wrap = document.getElementById('zta-baseline-wrap');
+  loading.classList.remove('hidden');
+  wrap.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/flows/zta-baseline');
+    const data = await resp.json();
+    loading.classList.add('hidden');
+
+    const body = document.getElementById('zta-baseline-body');
+    let html = '';
+    const actionColor = (acts) => {
+      const s = (acts || []).join(' ');
+      if (s.includes('DROP')) return 'text-error';
+      if (s.includes('CONTROLLER')) return 'text-info';
+      if (s.includes('FLOOD')) return 'text-warning';
+      return 'text-success';
+    };
+
+    for (const [dpid, rules] of Object.entries(data)) {
+      const role = dpid === '1' ? 'core' : 'access';
+      html += `<details class="collapse collapse-arrow bg-base-200 rounded-lg" ${dpid === '1' ? 'open' : ''}>
+        <summary class="collapse-title text-xs font-bold py-2 min-h-0">
+          <i class="fa-solid fa-shuffle mr-1 text-blue-400"></i> Switch s${dpid} (${role}) — ${rules.length} rules
+        </summary>
+        <div class="collapse-content px-2 pb-2">
+          <table class="table table-xs w-full">
+            <thead><tr><th>Priority</th><th>Match</th><th>Actions</th><th>Purpose</th></tr></thead>
+            <tbody>`;
+      rules.forEach(r => {
+        const matchStr = Object.keys(r.match || {}).length === 0
+          ? '<span class="opacity-40">*</span>'
+          : Object.entries(r.match).map(([k,v]) => `${k}=${v}`).join(', ');
+        html += `<tr>
+          <td class="font-mono text-xs">${r.priority}</td>
+          <td class="font-mono text-xs">${matchStr}</td>
+          <td class="font-mono text-xs ${actionColor(r.actions)}">${(r.actions || []).join(', ') || 'DROP'}</td>
+          <td class="text-xs opacity-70">${r.purpose || ''}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div></details>`;
+    }
+    body.innerHTML = html;
+    wrap.classList.remove('hidden');
+  } catch (err) {
+    loading.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-2 text-error"></i> ${err.message}`;
+  }
+}
+
+// ── RL-Installed Rules ───────────────────────────────────────────
+let rlRulesRefreshTimer = null;
+
+async function loadRLRules() {
+  try {
+    const resp = await fetch('/flows/rl-rules');
+    const data = await resp.json();
+    const rules = data.rules || [];
+
+    const emptyEl = document.getElementById('rl-rules-empty');
+    const wrapEl = document.getElementById('rl-rules-wrap');
+
+    if (rules.length === 0) {
+      emptyEl.classList.remove('hidden');
+      wrapEl.classList.add('hidden');
+      return;
+    }
+
+    emptyEl.classList.add('hidden');
+    wrapEl.classList.remove('hidden');
+
+    const actionBadge = (action) => {
+      const colors = {
+        'ALLOW': 'badge-success', 'BLOCK': 'badge-error',
+        'REROUTE': 'badge-info', 'RATE_LIMIT': 'badge-warning',
+      };
+      return `<span class="badge badge-xs ${colors[action] || 'badge-ghost'}">${action}</span>`;
+    };
+
+    const tbody = document.getElementById('rl-rules-body');
+    let html = '';
+    rules.slice(-50).reverse().forEach(r => {
+      const matchStr = typeof r.match === 'object'
+        ? Object.entries(r.match || {}).map(([k,v]) => `${k}=${v}`).join(', ')
+        : String(r.match || '*');
+      html += `<tr>
+        <td class="font-mono text-xs">${r.step || '--'}</td>
+        <td>${actionBadge(r.action || 'ALLOW')}</td>
+        <td class="text-xs">${r.attack_type || 'none'}</td>
+        <td class="font-mono text-xs">${r.priority || '--'}</td>
+        <td class="font-mono text-xs">${matchStr}</td>
+        <td class="font-mono text-xs">${(r.actions || []).join(', ') || '--'}</td>
+        <td class="text-xs opacity-70">${r.purpose || '--'}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    console.error('Failed to load RL rules:', err);
+  }
+}
+
+document.getElementById('btn-refresh-rl-rules').addEventListener('click', () => {
+  loadRLRules();
+  showToast('info', 'RL rules refreshed');
+});
+
+// Auto-refresh RL rules every 5s when network tab visible
+setInterval(() => {
+  if (!document.getElementById('tab-network').classList.contains('hidden')) {
+    loadRLRules();
+  }
+}, 5000);
+
+// ── Baseline Capture + Flow Diff ─────────────────────────────────
+let baselineCaptured = false;
+
+document.getElementById('btn-capture-baseline').addEventListener('click', async () => {
+  try {
+    const resp = await fetch('/flows/baseline', { method: 'POST' });
+    if (resp.ok) {
+      baselineCaptured = true;
+      document.getElementById('btn-show-diff').classList.remove('hidden');
+      showToast('success', 'Baseline captured');
+    } else {
+      showToast('error', 'Failed to capture baseline');
+    }
+  } catch (err) {
+    showToast('error', err.message);
+  }
+});
+
+document.getElementById('btn-show-diff').addEventListener('click', async () => {
+  const dpid = document.getElementById('flows-dpid').value;
+  const diffWrap = document.getElementById('flows-diff-wrap');
+  const diffBody = document.getElementById('flows-diff-body');
+  try {
+    const resp = await fetch(`/flows/diff/${dpid}`);
+    const diff = await resp.json();
+    if (diff.error) {
+      diffBody.innerHTML = `<p class="text-error text-xs">${diff.error}</p>`;
+    } else {
+      let html = '<table class="table table-xs w-full">';
+      html += '<thead><tr><th>Change</th><th>Priority</th><th>Match</th><th>Actions</th></tr></thead><tbody>';
+      (diff.added || []).forEach(f => {
+        html += `<tr class="text-success"><td>+ Added</td><td class="font-mono">${f.priority || '--'}</td><td class="font-mono text-xs">${formatMatch(f.match || {})}</td><td class="font-mono text-xs">${(f.actions || []).join(', ') || 'DROP'}</td></tr>`;
+      });
+      (diff.removed || []).forEach(f => {
+        html += `<tr class="text-error"><td>- Removed</td><td class="font-mono">${f.priority || '--'}</td><td class="font-mono text-xs">${formatMatch(f.match || {})}</td><td class="font-mono text-xs">${(f.actions || []).join(', ') || 'DROP'}</td></tr>`;
+      });
+      (diff.modified || []).forEach(f => {
+        html += `<tr class="text-warning"><td>~ Modified</td><td class="font-mono">${f.priority || '--'}</td><td class="font-mono text-xs">${formatMatch(f.match || {})}</td><td class="font-mono text-xs">${(f.actions || []).join(', ') || 'DROP'}</td></tr>`;
+      });
+      if (!(diff.added || []).length && !(diff.removed || []).length && !(diff.modified || []).length) {
+        html += '<tr><td colspan="4" class="text-center opacity-50">No changes from baseline</td></tr>';
+      }
+      html += '</tbody></table>';
+      diffBody.innerHTML = html;
+    }
+    diffWrap.classList.remove('hidden');
+  } catch (err) {
+    diffBody.innerHTML = `<p class="text-error text-xs">${err.message}</p>`;
+    diffWrap.classList.remove('hidden');
+  }
+});
+
+// ── Live Session Comparison ──────────────────────────────────────
+let sessionActionsChart = null;
+
+async function loadSessionComparison() {
+  try {
+    const resp = await fetch('/sessions');
+    const sessions = await resp.json();
+    const agents = Object.keys(sessions);
+    if (agents.length === 0) {
+      document.getElementById('sessions-empty').classList.remove('hidden');
+      document.getElementById('sessions-table-wrap').classList.add('hidden');
+      return;
+    }
+
+    document.getElementById('sessions-empty').classList.add('hidden');
+    document.getElementById('sessions-table-wrap').classList.remove('hidden');
+
+    const dqn = sessions.dqn || null;
+    const ppo = sessions.ppo || null;
+    const fmt = (v, pct) => v != null ? (pct ? (v * 100).toFixed(1) + '%' : v.toFixed(3)) : '--';
+    const fmtInt = v => v != null ? v : '--';
+
+    const tbody = document.getElementById('sessions-body');
+    tbody.innerHTML = `
+      <tr><td class="opacity-70">Steps</td><td class="font-mono">${dqn ? fmtInt(dqn.steps) : '--'}</td><td class="font-mono">${ppo ? fmtInt(ppo.steps) : '--'}</td></tr>
+      <tr><td class="opacity-70">Total Reward</td><td class="font-mono">${dqn ? fmt(dqn.total_reward) : '--'}</td><td class="font-mono">${ppo ? fmt(ppo.total_reward) : '--'}</td></tr>
+      <tr><td class="opacity-70">Avg Reward</td><td class="font-mono">${dqn ? fmt(dqn.avg_reward) : '--'}</td><td class="font-mono">${ppo ? fmt(ppo.avg_reward) : '--'}</td></tr>
+      <tr><td class="opacity-70">Detection Rate</td><td class="font-mono">${dqn ? fmt(dqn.avg_detection_rate, true) : '--'}</td><td class="font-mono">${ppo ? fmt(ppo.avg_detection_rate, true) : '--'}</td></tr>
+      <tr><td class="opacity-70">False Positive Rate</td><td class="font-mono">${dqn ? fmt(dqn.avg_fpr, true) : '--'}</td><td class="font-mono">${ppo ? fmt(ppo.avg_fpr, true) : '--'}</td></tr>
+    `;
+
+    // Action distribution grouped bar chart
+    const canvas = document.getElementById('chart-session-actions');
+    if (sessionActionsChart) sessionActionsChart.destroy();
+
+    const dqnActions = dqn ? dqn.action_distribution || {} : {};
+    const ppoActions = ppo ? ppo.action_distribution || {} : {};
+    sessionActionsChart = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: ['ALLOW', 'BLOCK', 'REROUTE', 'RATE_LIMIT'],
+        datasets: [
+          { label: 'DQN', data: [dqnActions['0']||0, dqnActions['1']||0, dqnActions['2']||0, dqnActions['3']||0], backgroundColor: '#38bdf8' },
+          { label: 'PPO', data: [ppoActions['0']||0, ppoActions['1']||0, ppoActions['2']||0, ppoActions['3']||0], backgroundColor: '#c084fc' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { color: '#9ca3af', font: { size: 9 } }, grid: { color: '#374151' } },
+          y: { ticks: { color: '#9ca3af', font: { size: 9 } }, grid: { color: '#374151' } },
+        },
+      },
+    });
+  } catch (e) { /* ignore */ }
+}
+
+document.getElementById('btn-refresh-sessions').addEventListener('click', () => {
+  loadSessionComparison();
+  showToast('info', 'Session data refreshed');
+});
+
+// ── Action Distribution Donut Chart ──────────────────────────────
+const actionDistCounts = { 0: 0, 1: 0, 2: 0, 3: 0 };
+const actionDonutChart = new Chart(document.getElementById('action-dist-chart').getContext('2d'), {
+  type: 'doughnut',
+  data: {
+    labels: ['ALLOW', 'BLOCK', 'REROUTE', 'RATE_LIMIT'],
+    datasets: [{
+      data: [0, 0, 0, 0],
+      backgroundColor: ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b'],
+      borderWidth: 0,
+    }],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    cutout: '60%',
+    plugins: {
+      legend: { position: 'bottom', labels: { color: '#9ca3af', font: { size: 9 }, padding: 8, usePointStyle: true, pointStyleWidth: 8 } },
+    },
+  },
+});
+
+function updateActionDistribution(ev) {
+  const a = ev.action;
+  if (a >= 0 && a <= 3) {
+    actionDistCounts[a]++;
+    actionDonutChart.data.datasets[0].data = [actionDistCounts[0], actionDistCounts[1], actionDistCounts[2], actionDistCounts[3]];
+    actionDonutChart.update('none');
+  }
+}
+
+// ── Policy Decision Explainability ───────────────────────────────
+function updateExplainability(ev) {
+  const el = document.getElementById('explain-card');
+  if (!el) return;
+
+  const atkType = ev.attack_type || 'none';
+  const atkEl = document.getElementById('explain-attack');
+  const actionEl = document.getElementById('explain-action');
+  const matchEl = document.getElementById('explain-match');
+  const textEl = document.getElementById('explain-text');
+  const optimalEl = document.getElementById('explain-optimal-action');
+
+  if (atkEl) atkEl.textContent = atkType.toUpperCase();
+  if (actionEl) actionEl.textContent = ACTION_NAMES[ev.action] || 'ALLOW';
+  if (optimalEl) optimalEl.textContent = ev.optimal_action_name || 'ALLOW';
+
+  if (matchEl) {
+    if (ev.action_matches_optimal) {
+      matchEl.className = 'badge badge-success badge-sm';
+      matchEl.textContent = 'Optimal';
+    } else {
+      matchEl.className = 'badge badge-warning badge-sm';
+      matchEl.textContent = 'Sub-optimal';
+    }
+  }
+  if (textEl) textEl.textContent = ev.explanation || '';
+}
 
 // ── Reward Formula Highlighting ───────────────────────────────────
 function updateRewardFormula() {
@@ -2142,6 +2709,7 @@ async function replayHistory() {
       updateSparklines(ev);
       updateConfusionMatrix(ev);
       updateActionTimeline(ev);
+      updateActionDistribution(ev);
       lastStepEvent = ev;
     });
 
@@ -2152,6 +2720,7 @@ async function replayHistory() {
     updateTopology(last);
     updatePPOPanel(last);
     updateCountdown(last);
+    updateExplainability(last);
     document.getElementById('nav-step').textContent = last.step;
 
     // Hide loading state
@@ -2217,6 +2786,8 @@ handleEvent = function(event) {
     updateConfusionMatrix(event);
     updateCumulativeReward(event);
     updateCountdown(event);
+    updateActionDistribution(event);
+    updateExplainability(event);
 
     // C8: Hide loading state on first event
     const loadingEl = document.getElementById('live-loading');
@@ -2241,10 +2812,10 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Load comparison data on System tab switch (already handled by tab listener)
+// Load comparison data on Comparison tab switch (already handled by tab listener)
 document.querySelectorAll('[data-tab]').forEach(tab => {
   tab.addEventListener('click', () => {
-    if (tab.dataset.tab === 'system') loadComparison();
+    if (tab.dataset.tab === 'comparison') loadComparison();
   });
 });
 

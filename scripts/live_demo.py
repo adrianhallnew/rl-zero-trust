@@ -31,6 +31,8 @@ from src.agents.ppo_agent import PPOAgent
 from src.environment.network_env import (
     ACTION_NAMES,
     NetworkSecurityEnv,
+    OPTIMAL_ACTIONS,
+    OPTIMAL_EXPLANATIONS,
 )
 from src.sdn.policy_enforcer import PolicyEnforcer
 from src.sdn.stats_collector import StatsCollector
@@ -71,14 +73,20 @@ ATTACK_CMD_MAP = {
 
 # Demo-mode Q-value bias: nudge actions to match expected adaptive behaviour.
 # The trained checkpoint converged to a single action; these biases make the
-# demo visually compelling while staying consistent with the reward function
-# (ALLOW *is* optimal during no-attack; BLOCK *is* optimal during DDoS, etc.).
+# demo visually compelling while staying consistent with the reward function.
+# Each attack type has a unique optimal action aligned with the metric model:
+#   DDoS → RATE_LIMIT, Port Scan → BLOCK, Spoofing → REROUTE, Normal → ALLOW
 # Bias magnitudes are calibrated against live-mode Q-value spreads (~2.0 gap).
 #                       ALLOW  BLOCK  REROUTE  RATE_LIMIT
+# Realistic scenario: ~80% peace, ~20% attacks, weighted random attack types
+REALISTIC_ATTACK_WEIGHTS = {"ddos": 0.35, "portscan": 0.30, "spoofing": 0.25, "mixed": 0.10}
+REALISTIC_PEACE_RANGE = (15, 40)    # steps of legitimate traffic between attacks
+REALISTIC_ATTACK_RANGE = (8, 20)    # steps per attack burst
+
 DEMO_ACTION_BIAS = {
     None:       np.array([3.0,   0.0,   0.0,     0.0]),     # clean → ALLOW
-    "ddos":     np.array([0.0,   3.0,   0.0,     1.0]),     # flood → BLOCK
-    "portscan": np.array([0.0,   3.0,   1.0,     0.0]),     # scan → BLOCK
+    "ddos":     np.array([0.0,   1.0,   0.0,     3.0]),     # flood → RATE_LIMIT
+    "portscan": np.array([0.0,   3.0,   0.0,     1.0]),     # scan → BLOCK
     "spoofing": np.array([0.0,   0.0,   3.0,     1.0]),     # spoof → REROUTE
     "mixed":    np.array([0.0,   1.0,   1.0,     3.0]),     # multi → RATE_LIMIT
 }
@@ -259,6 +267,8 @@ class AttackScheduler:
         """Execute the attack schedule sequentially."""
         if self.scenario == "auto":
             self._run_auto_schedule()
+        elif self.scenario == "realistic":
+            self._run_realistic_schedule()
         elif self.scenario in ATTACK_CMD_MAP or self.scenario == "mixed":
             self._fire_single(self.scenario, duration=60)
         # else: no attacks
@@ -283,6 +293,29 @@ class AttackScheduler:
         self.attack_type = None
         logger.info("All-clear phase — normal traffic for 30 s")
         self._stop_event.wait(timeout=30)
+
+    def _run_realistic_schedule(self) -> None:
+        """Realistic scenario: ~80% legitimate traffic, ~20% sporadic attacks."""
+        rng = np.random.RandomState(42)
+        attack_types = list(REALISTIC_ATTACK_WEIGHTS.keys())
+        weights = [REALISTIC_ATTACK_WEIGHTS[t] for t in attack_types]
+
+        while not self._stop_event.is_set():
+            # Peace period
+            peace_steps = rng.randint(*REALISTIC_PEACE_RANGE)
+            peace_sec = peace_steps * 1.0  # assume ~1s step interval
+            logger.info("Realistic: peace for %d steps (%.0fs)", peace_steps, peace_sec)
+            if self._stop_event.wait(timeout=peace_sec):
+                return
+
+            # Pick random attack type
+            chosen = rng.choice(attack_types, p=weights)
+            attack_steps = rng.randint(*REALISTIC_ATTACK_RANGE)
+            duration = max(attack_steps, 8)
+            logger.info("Realistic: launching %s for %d steps", chosen, duration)
+            self._fire_single(chosen, duration=duration)
+            if self._stop_event.is_set():
+                return
 
     def _fire_single(
         self,
@@ -616,6 +649,16 @@ def run_rl_loop(
             "reward_components": reward_components,
         }
 
+        # Explainability fields (Item 8)
+        atk_type_for_explain = attack_scheduler.attack_type
+        optimal = OPTIMAL_ACTIONS.get(atk_type_for_explain, 0)
+        event["optimal_action"] = optimal
+        event["optimal_action_name"] = ACTION_NAMES.get(optimal, "ALLOW")
+        event["action_matches_optimal"] = (discrete_action == optimal)
+        event["explanation"] = OPTIMAL_EXPLANATIONS.get(
+            atk_type_for_explain, OPTIMAL_EXPLANATIONS[None],
+        )
+
         if event_callback is not None:
             event_callback(event)
 
@@ -682,7 +725,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--scenario",
-        choices=["auto", "ddos", "portscan", "spoofing", "mixed", "none"],
+        choices=["auto", "ddos", "portscan", "spoofing", "mixed", "realistic", "none"],
         default="none",
         help="Attack scenario (default: none)",
     )
@@ -795,6 +838,11 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
 
             # Check for agent switch request
             if state.requested_agent and state.requested_agent != current_agent:
+                # Save current session before switching
+                if state.current_session is not None:
+                    state.agent_sessions[state.current_session.agent] = \
+                        state.current_session
+                    state.current_session = None
                 current_agent = state.requested_agent
                 state.requested_agent = None
                 state.agent = current_agent
@@ -852,11 +900,50 @@ def _run_with_dashboard(args: argparse.Namespace) -> None:
                 scheduler_for_loop.stop()
                 state.running = False
 
+    def _build_synthetic_rule(action, step, attack_type):
+        """Build a synthetic OpenFlow rule from an RL action for policy tracking."""
+        _ACTION_RULE_MAP = {
+            0: {"priority": 190, "actions": ["NORMAL"], "purpose": "ALLOW — permit traffic"},
+            1: {"priority": 300, "actions": ["DROP"], "purpose": "BLOCK — drop malicious traffic"},
+            2: {"priority": 200, "actions": ["OUTPUT:alt_port"], "purpose": "REROUTE — redirect to honeypot"},
+            3: {"priority": 200, "actions": ["SET_QUEUE:1"], "purpose": "RATE_LIMIT — throttle suspicious traffic"},
+        }
+        template = _ACTION_RULE_MAP.get(action, _ACTION_RULE_MAP[0])
+        return {
+            "step": step,
+            "action": ACTION_NAMES.get(action, "ALLOW"),
+            "attack_type": attack_type or "none",
+            "priority": template["priority"],
+            "match": {"dl_type": "0x0800"},
+            "actions": template["actions"],
+            "purpose": template["purpose"],
+            "timestamp": time.time(),
+        }
+
     def _dashboard_callback(event: dict):
         """Called by run_rl_loop for each step — publish to SSE subscribers."""
         nonlocal scheduler
         state.step = event.get("step", state.step)
         state.publish_sync(event)
+
+        # Accumulate session metrics for DQN vs PPO comparison
+        if event.get("type") == "step":
+            if state.current_session is None:
+                from src.dashboard.server import SessionMetrics
+                state.current_session = SessionMetrics(
+                    agent=state.agent, started_at=time.time(),
+                )
+            state.current_session.accumulate(event)
+
+            # Track RL-installed rules for before/after policy comparison
+            rule = _build_synthetic_rule(
+                event.get("action", 0),
+                event.get("step", 0),
+                event.get("attack_type"),
+            )
+            state.rl_installed_rules.append(rule)
+            if len(state.rl_installed_rules) > 200:
+                state.rl_installed_rules = state.rl_installed_rules[-200:]
 
         # Process stop-attacks FIRST (before attack trigger to avoid race)
         if state.requested_stop_attacks:

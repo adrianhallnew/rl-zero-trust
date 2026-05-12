@@ -71,7 +71,7 @@ class TestParseArgsOverrides:
         assert args.scenario == "auto"
 
     def test_all_scenario_choices(self):
-        for scenario in ("auto", "ddos", "portscan", "spoofing", "mixed", "none"):
+        for scenario in ("auto", "ddos", "portscan", "spoofing", "mixed", "realistic", "none"):
             with patch("sys.argv", ["live_demo.py", "--scenario", scenario]):
                 args = parse_args()
             assert args.scenario == scenario
@@ -174,8 +174,8 @@ class TestDemoActionBias:
         bias = DEMO_ACTION_BIAS[None]
         assert np.argmax(bias) == 0  # ALLOW is index 0
 
-    def test_ddos_favours_block(self):
-        assert np.argmax(DEMO_ACTION_BIAS["ddos"]) == 1
+    def test_ddos_favours_rate_limit(self):
+        assert np.argmax(DEMO_ACTION_BIAS["ddos"]) == 3
 
     def test_spoofing_favours_reroute(self):
         assert np.argmax(DEMO_ACTION_BIAS["spoofing"]) == 2

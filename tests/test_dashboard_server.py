@@ -43,6 +43,11 @@ def reset_state():
     state.requested_auto_scenario = False
     state.requested_start = False
     state.requested_stop = False
+    state.agent_sessions = {}
+    state.current_session = None
+    state.baseline_flows = {}
+    state.baseline_captured = False
+    state.rl_installed_rules = []
     yield
 
 

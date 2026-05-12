@@ -16,6 +16,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,8 +47,157 @@ _SUMMARY_JSON = _PROJECT_ROOT / "results" / "experiments" / "summary.json"
 RYU_API_URL = os.environ.get("RYU_API_URL", "http://localhost:8080")
 
 # ---------------------------------------------------------------------------
+# ZTA Baseline Rules (static, matches ryu_app.py ZeroTrustSwitch defaults)
+# ---------------------------------------------------------------------------
+
+def _build_zta_baseline() -> Dict[int, List[Dict[str, Any]]]:
+    """Build the static ZTA baseline rules for all 5 switches.
+
+    Mirrors what ryu_app.py installs:
+      - Priority 0: table-miss → send to controller
+      - Priority 1: default deny (DROP) — zero-trust posture
+      - Priority 100: ARP flood for L2 discovery
+      - Priority 100: learned forwarding rules (eth_src+eth_dst→output)
+    """
+    rules: Dict[int, List[Dict[str, Any]]] = {}
+
+    # Topology: s1 (core) connects to s2-s5 (access) on ports 1-4
+    # Each access switch connects to core on port 1, hosts on ports 2-4
+    # 15 hosts: h1-h3→s2, h4-h6→s3, h7-h9→s4, h10-h12→s5, h13-h15→s2(extra)
+    switch_ports = {
+        1: {  # core: ports 1-4 → s2,s3,s4,s5
+            "forwarding": [
+                {"in_port": 1, "eth_dst": "00:00:00:00:00:01", "out_port": 1},
+                {"in_port": 2, "eth_dst": "00:00:00:00:00:04", "out_port": 2},
+                {"in_port": 3, "eth_dst": "00:00:00:00:00:07", "out_port": 3},
+                {"in_port": 4, "eth_dst": "00:00:00:00:00:0a", "out_port": 4},
+            ],
+        },
+        2: {  # access: port 1→core, ports 2-4→h1,h2,h3
+            "forwarding": [
+                {"in_port": 2, "eth_dst": "00:00:00:00:00:01", "out_port": 2},
+                {"in_port": 3, "eth_dst": "00:00:00:00:00:02", "out_port": 3},
+                {"in_port": 1, "eth_dst": "00:00:00:00:00:03", "out_port": 1},
+            ],
+        },
+        3: {  # access: port 1→core, ports 2-4→h4,h5,h6
+            "forwarding": [
+                {"in_port": 2, "eth_dst": "00:00:00:00:00:04", "out_port": 2},
+                {"in_port": 3, "eth_dst": "00:00:00:00:00:05", "out_port": 3},
+                {"in_port": 1, "eth_dst": "00:00:00:00:00:06", "out_port": 1},
+            ],
+        },
+        4: {  # access: port 1→core, ports 2-4→h7,h8,h9
+            "forwarding": [
+                {"in_port": 2, "eth_dst": "00:00:00:00:00:07", "out_port": 2},
+                {"in_port": 3, "eth_dst": "00:00:00:00:00:08", "out_port": 3},
+                {"in_port": 1, "eth_dst": "00:00:00:00:00:09", "out_port": 1},
+            ],
+        },
+        5: {  # access: port 1→core, ports 2-4→h10,h11,h12
+            "forwarding": [
+                {"in_port": 2, "eth_dst": "00:00:00:00:00:0a", "out_port": 2},
+                {"in_port": 3, "eth_dst": "00:00:00:00:00:0b", "out_port": 3},
+                {"in_port": 1, "eth_dst": "00:00:00:00:00:0c", "out_port": 1},
+            ],
+        },
+    }
+
+    for dpid in range(1, 6):
+        sw_rules = [
+            {
+                "priority": 0, "match": {},
+                "actions": ["OUTPUT:CONTROLLER"],
+                "purpose": "Table-miss — send unknown packets to controller",
+            },
+            {
+                "priority": 1, "match": {},
+                "actions": ["DROP"],
+                "purpose": "Default deny — zero-trust baseline policy",
+            },
+            {
+                "priority": 100, "match": {"dl_type": "0x0806"},
+                "actions": ["FLOOD"],
+                "purpose": "ARP broadcast for L2 host discovery",
+            },
+        ]
+        for fwd in switch_ports[dpid]["forwarding"]:
+            sw_rules.append({
+                "priority": 100,
+                "match": {
+                    "in_port": fwd["in_port"],
+                    "eth_dst": fwd["eth_dst"],
+                },
+                "actions": [f"OUTPUT:{fwd['out_port']}"],
+                "purpose": "Learned L2 forwarding",
+                "idle_timeout": 30,
+                "hard_timeout": 300,
+            })
+        rules[dpid] = sw_rules
+
+    return rules
+
+
+ZTA_BASELINE_RULES: Dict[int, List[Dict[str, Any]]] = _build_zta_baseline()
+
+# ---------------------------------------------------------------------------
 # Application state (shared with live_demo.py via DashboardState)
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class SessionMetrics:
+    """Running metrics for one agent session (Item 9)."""
+
+    agent: str
+    started_at: float
+    steps: int = 0
+    total_reward: float = 0.0
+    action_counts: Dict[int, int] = field(
+        default_factory=lambda: {0: 0, 1: 0, 2: 0, 3: 0},
+    )
+    detection_rate_sum: float = 0.0
+    fpr_sum: float = 0.0
+    throughput_sum: float = 0.0
+    latency_sum: float = 0.0
+
+    @property
+    def avg_reward(self) -> float:
+        return self.total_reward / max(self.steps, 1)
+
+    @property
+    def avg_detection_rate(self) -> float:
+        return self.detection_rate_sum / max(self.steps, 1)
+
+    @property
+    def avg_fpr(self) -> float:
+        return self.fpr_sum / max(self.steps, 1)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "started_at": self.started_at,
+            "steps": self.steps,
+            "avg_reward": self.avg_reward,
+            "total_reward": self.total_reward,
+            "avg_detection_rate": self.avg_detection_rate,
+            "avg_fpr": self.avg_fpr,
+            "avg_throughput": self.throughput_sum / max(self.steps, 1),
+            "avg_latency": self.latency_sum / max(self.steps, 1),
+            "action_distribution": dict(self.action_counts),
+        }
+
+    def accumulate(self, event: Dict[str, Any]) -> None:
+        """Accumulate a step event into running totals."""
+        self.steps += 1
+        self.total_reward += event.get("reward", 0.0)
+        action = event.get("action", 0)
+        self.action_counts[action] = self.action_counts.get(action, 0) + 1
+        metrics = event.get("metrics", {})
+        self.detection_rate_sum += metrics.get("detection_rate", 0.0)
+        self.fpr_sum += metrics.get("false_positive_rate", 0.0)
+        self.throughput_sum += metrics.get("throughput_mbps", 0.0)
+        self.latency_sum += metrics.get("latency_ms", 0.0)
 
 
 class DashboardState:
@@ -86,6 +236,17 @@ class DashboardState:
         self.requested_auto_scenario: bool = False
         self.requested_start: bool = False
         self.requested_stop: bool = False
+
+        # Session comparison memory (Item 9)
+        self.agent_sessions: Dict[str, SessionMetrics] = {}
+        self.current_session: Optional[SessionMetrics] = None
+
+        # Baseline flow snapshot (Item 10)
+        self.baseline_flows: Dict[int, List[Dict]] = {}
+        self.baseline_captured: bool = False
+
+        # RL-installed rules tracker (before/after policy comparison)
+        self.rl_installed_rules: List[Dict[str, Any]] = []
 
     async def publish(self, event: Dict[str, Any]) -> None:
         """Push an event to all SSE subscribers."""
@@ -406,9 +567,131 @@ async def list_charts():
     return {"charts": charts}
 
 
+def _flow_key(flow: Dict) -> str:
+    """Create a hashable key from a flow's priority + match."""
+    return f"{flow.get('priority', 0)}:{json.dumps(flow.get('match', {}), sort_keys=True)}"
+
+
+@app.get("/flows/zta-baseline")
+async def get_zta_baseline():
+    """Return the static ZTA baseline rules (before RL)."""
+    return {str(k): v for k, v in ZTA_BASELINE_RULES.items()}
+
+
+@app.get("/flows/rl-rules")
+async def get_rl_rules():
+    """Return rules installed by the RL agent."""
+    return {"rules": list(state.rl_installed_rules)}
+
+
+@app.get("/flows/baseline")
+async def get_baseline():
+    """Return the captured baseline flow rules."""
+    if not state.baseline_captured:
+        return JSONResponse({"error": "No baseline captured yet"}, status_code=404)
+    return {
+        "baseline": {str(k): v for k, v in state.baseline_flows.items()},
+    }
+
+
+@app.post("/flows/baseline")
+async def capture_baseline():
+    """Capture current flow rules as baseline for diff comparison."""
+    if state.mode == "sim":
+        state.baseline_flows = {
+            dpid: list(rules) for dpid, rules in ZTA_BASELINE_RULES.items()
+        }
+        state.baseline_captured = True
+        total = sum(len(f) for f in state.baseline_flows.values())
+        await state.publish({
+            "type": "toast", "level": "success",
+            "message": f"Baseline captured (sim): {total} ZTA rules across 5 switches",
+            "timestamp": time.time(),
+        })
+        return {"status": "ok", "switches": 5, "total_rules": total}
+
+    import requests as http_requests
+    captured: Dict[int, list] = {}
+    for dpid in range(1, 6):
+        try:
+            resp = http_requests.get(
+                f"{RYU_API_URL}/stats/flow/{dpid}", timeout=5,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            captured[dpid] = data.get(str(dpid), [])
+        except Exception:
+            captured[dpid] = []
+    state.baseline_flows = captured
+    state.baseline_captured = True
+    total = sum(len(f) for f in captured.values())
+    await state.publish({
+        "type": "toast", "level": "success",
+        "message": f"Baseline captured: {total} rules across 5 switches",
+        "timestamp": time.time(),
+    })
+    return {"status": "ok", "switches": len(captured), "total_rules": total}
+
+
+@app.get("/flows/diff/{dpid}")
+async def get_flow_diff(dpid: int):
+    """Compare current flows against baseline for a switch."""
+    if not state.baseline_captured:
+        return JSONResponse({"error": "No baseline captured"}, status_code=404)
+
+    if state.mode == "sim":
+        baseline = state.baseline_flows.get(dpid, [])
+        rl_rules = [
+            r for r in state.rl_installed_rules
+            if r.get("dpid", 0) == dpid or r.get("dpid") is None
+        ]
+        return {
+            "dpid": dpid,
+            "added": rl_rules,
+            "removed": [],
+            "modified": [],
+            "unchanged": len(baseline),
+        }
+
+    import requests as http_requests
+    try:
+        resp = http_requests.get(
+            f"{RYU_API_URL}/stats/flow/{dpid}", timeout=5,
+        )
+        resp.raise_for_status()
+        current_flows = resp.json().get(str(dpid), [])
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"Cannot reach Ryu: {exc}"}, status_code=502,
+        )
+
+    baseline = state.baseline_flows.get(dpid, [])
+    baseline_set = {_flow_key(f): f for f in baseline}
+    current_set = {_flow_key(f): f for f in current_flows}
+
+    added = [current_set[k] for k in current_set if k not in baseline_set]
+    removed = [baseline_set[k] for k in baseline_set if k not in current_set]
+    modified = []
+    for k in current_set:
+        if k in baseline_set and current_set[k] != baseline_set[k]:
+            modified.append({"baseline": baseline_set[k], "current": current_set[k]})
+
+    unchanged = len(current_set) - len(added) - len(modified)
+    return {
+        "dpid": dpid,
+        "added": added,
+        "removed": removed,
+        "modified": modified,
+        "unchanged": unchanged,
+    }
+
+
 @app.get("/flows/{dpid}")
 async def get_flows(dpid: int):
     """Proxy to Ryu flow stats for the policy rules view."""
+    if state.mode == "sim":
+        return {str(dpid): ZTA_BASELINE_RULES.get(dpid, [])}
+
     import requests as http_requests
     try:
         resp = http_requests.get(
@@ -420,3 +703,48 @@ async def get_flows(dpid: int):
         return JSONResponse(
             {"error": f"Cannot reach Ryu: {exc}"}, status_code=502,
         )
+
+
+# ---------------------------------------------------------------------------
+# Session comparison (Item 9)
+# ---------------------------------------------------------------------------
+
+@app.get("/sessions")
+async def get_sessions():
+    """Return stored session metrics for DQN vs PPO comparison."""
+    result = {}
+    for name, session in state.agent_sessions.items():
+        result[name] = session.to_dict()
+    if state.current_session is not None:
+        result[state.current_session.agent] = state.current_session.to_dict()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Device inventory (Item 4)
+# ---------------------------------------------------------------------------
+
+@app.get("/devices")
+async def get_devices():
+    """Return device inventory for all switches and hosts."""
+    devices = []
+    for i in range(1, 6):
+        role = "core" if i == 1 else "access"
+        devices.append({
+            "type": "switch", "id": f"s{i}", "dpid": i,
+            "role": role, "protocol": "OpenFlow 1.3",
+            "status": "active",
+        })
+    for i in range(1, 16):
+        switch_idx = 1 if i <= 3 else 2 + (i - 4) // 3
+        role = "server" if i <= 3 else "endpoint"
+        devices.append({
+            "type": "host", "id": f"h{i}",
+            "ip": f"10.0.0.{i}",
+            "mac": f"00:00:00:00:00:{i:02x}",
+            "switch": f"s{switch_idx}",
+            "role": role, "status": "active",
+        })
+    return {"devices": devices}
+
+

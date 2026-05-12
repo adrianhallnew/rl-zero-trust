@@ -49,6 +49,77 @@ DEFAULT_BASELINE_THROUGHPUT = 100.0  # Mbps
 DEFAULT_MIN_THROUGHPUT = 10.0        # Mbps
 DEFAULT_MAX_LATENCY = 50.0           # ms
 
+# Attack-type-sensitive optimal actions — each attack has a single best response
+OPTIMAL_ACTIONS = {
+    "ddos": 3,        # RATE_LIMIT — throttle flood, preserve service
+    "port_scan": 1,   # BLOCK — kill reconnaissance immediately
+    "portscan": 1,    # BLOCK (alias used by AttackScheduler)
+    "spoofing": 2,    # REROUTE — isolate for inspection
+    "mixed": 3,       # RATE_LIMIT — multi-vector needs throttling
+    None: 0,          # ALLOW — no attack, pass traffic
+}
+
+OPTIMAL_EXPLANATIONS = {
+    "ddos": "Throttling preserves service availability while mitigating volumetric flood",
+    "port_scan": "Immediate block kills reconnaissance before attack mapping completes",
+    "portscan": "Immediate block kills reconnaissance before attack mapping completes",
+    "spoofing": "Rerouting isolates spoofed traffic for inspection without service disruption",
+    "mixed": "Rate limiting across vectors contains multi-pronged attacks without full blackout",
+    None: "Allowing legitimate traffic maximizes throughput with zero false positives",
+}
+
+# ── Attack-type-aware metric tables ──────────────────────────────────
+# Each attack type defines metrics per action so that the OPTIMAL action
+# for that attack yields the highest composite reward under weights
+# (w_det=0.40, w_fp=0.25, w_thr=0.15, w_lat=0.10, w_stab=0.10).
+#
+# Format: (tp, fn, fp, tn, throughput_mbps, latency_ms)
+
+_DDOS_METRICS = {
+    # Optimal: RATE_LIMIT — throttle flood while keeping service up
+    3: (9, 1, 0, 90, 75.0, 10.0),   # RATE_LIMIT: best detection + high throughput
+    1: (8, 2, 1, 89, 40.0, 12.0),   # BLOCK: good detection but kills throughput + FP
+    2: (6, 4, 0, 90, 60.0, 20.0),   # REROUTE: moderate detection
+    0: (0, 10, 0, 90, 30.0, 40.0),  # ALLOW: missed detection
+}
+
+_PORTSCAN_METRICS = {
+    # Optimal: BLOCK — kill reconnaissance immediately
+    1: (9, 1, 0, 90, 45.0, 8.0),    # BLOCK: best detection, recon dead
+    3: (6, 4, 0, 90, 70.0, 15.0),   # RATE_LIMIT: slows scan but doesn't stop it
+    2: (5, 5, 0, 90, 65.0, 18.0),   # REROUTE: scan continues on new path
+    0: (0, 10, 0, 90, 30.0, 35.0),  # ALLOW: scan completes freely
+}
+
+_SPOOFING_METRICS = {
+    # Optimal: REROUTE — isolate spoofed traffic for inspection
+    2: (9, 1, 0, 90, 70.0, 12.0),   # REROUTE: best detection + good throughput
+    1: (7, 3, 2, 88, 40.0, 10.0),   # BLOCK: catches some but FP from similar legit
+    3: (6, 4, 1, 89, 65.0, 15.0),   # RATE_LIMIT: partial mitigation
+    0: (0, 10, 0, 90, 30.0, 40.0),  # ALLOW: spoofing continues
+}
+
+_DEFAULT_ATTACK_METRICS = {
+    1: (8, 2, 0, 90, 40.0, 10.0),
+    3: (7, 3, 0, 90, 70.0, 15.0),
+    2: (6, 4, 0, 90, 65.0, 20.0),
+    0: (0, 10, 0, 90, 30.0, 40.0),
+}
+
+_ATTACK_METRIC_TABLES = {
+    "ddos": _DDOS_METRICS,
+    "port_scan": _PORTSCAN_METRICS,
+    "portscan": _PORTSCAN_METRICS,
+    "spoofing": _SPOOFING_METRICS,
+    "mixed": _DDOS_METRICS,  # multi-vector treated as DDoS (RATE_LIMIT optimal)
+}
+
+
+def _attack_metrics(attack_type, action):
+    """Return (tp, fn, fp, tn, throughput, latency) for an attack+action pair."""
+    table = _ATTACK_METRIC_TABLES.get(attack_type, _DEFAULT_ATTACK_METRICS)
+    return table.get(action, table[0])
+
 
 class NetworkSecurityEnv(gym.Env):
     """Gymnasium environment for RL-driven network security.
@@ -493,52 +564,34 @@ class NetworkSecurityEnv(gym.Env):
     def _compute_legacy_metrics(self, action: int) -> Dict[str, Any]:
         """Legacy metric computation for backward compatibility."""
         attack = self._sim_attack_active
+        attack_type = self._sim_attack_type
         tp, fn, fp, tn = 0, 0, 0, 0
 
         if attack:
-            if action in (1, 3):
-                tp = self._rng.randint(7, 11)
-                fn = self._rng.randint(0, 3)
-                fp = self._rng.randint(0, 2)
-                tn = 90 - fp
+            tp, fn, fp, tn, _, _ = _attack_metrics(attack_type, action)
+            if action in (1, 2, 3):
                 self._sim_throughput = min(
-                    self._sim_throughput + self._rng.uniform(10, 25),
+                    self._sim_throughput + self._rng.uniform(5, 25),
                     DEFAULT_BASELINE_THROUGHPUT,
                 )
-            elif action == 2:
-                tp = self._rng.randint(5, 8)
-                fn = self._rng.randint(2, 5)
-                fp = self._rng.randint(0, 1)
-                tn = 90 - fp
-                self._sim_throughput = min(
-                    self._sim_throughput + self._rng.uniform(5, 15),
-                    DEFAULT_BASELINE_THROUGHPUT,
-                )
-            else:
-                tp = self._rng.randint(0, 2)
-                fn = self._rng.randint(7, 10)
-                fp = 0
-                tn = 90
 
             if self._rng.random() < 0.20:
                 self._sim_attack_active = False
                 self._sim_attack_type = None
         else:
-            if action in (1, 3):
-                tp = 0
-                fn = 0
-                fp = self._rng.randint(3, 8)
+            if action == 1:
+                tp, fn, fp = 0, 0, self._rng.randint(5, 10)
                 tn = 90 - fp
-                self._sim_throughput *= self._rng.uniform(0.7, 0.9)
+                self._sim_throughput *= self._rng.uniform(0.7, 0.85)
+            elif action == 3:
+                tp, fn, fp = 0, 0, self._rng.randint(3, 6)
+                tn = 90 - fp
+                self._sim_throughput *= self._rng.uniform(0.75, 0.9)
             elif action == 2:
-                tp = 0
-                fn = 0
-                fp = self._rng.randint(1, 3)
+                tp, fn, fp = 0, 0, self._rng.randint(1, 3)
                 tn = 90 - fp
             else:
-                tp = 0
-                fn = 0
-                fp = 0
+                tp, fn, fp = 0, 0, 0
                 tn = 90
 
         policy_changes = 0 if action == 0 else 1
@@ -584,21 +637,12 @@ class NetworkSecurityEnv(gym.Env):
             policy_changes = self.policy_enforcer.get_policy_changes()
 
         attack = self._sim_attack_active
+        attack_type = self._sim_attack_type
         tp, fn, fp, tn = 0, 0, 0, 0
 
         if attack:
-            if action == 1:        # BLOCK — strongest detection, most disruptive
-                tp, fn, fp, tn = 9, 1, 0, 90
-                throughput, latency = 40.0, 10.0
-            elif action == 3:      # RATE_LIMIT — moderate detection, gentler
-                tp, fn, fp, tn = 7, 3, 0, 90
-                throughput, latency = 70.0, 15.0
-            elif action == 2:      # REROUTE — weaker detection, good throughput
-                tp, fn, fp, tn = 6, 4, 0, 90
-                throughput, latency = 65.0, 20.0
-            else:                  # ALLOW — missed detection
-                tp, fn, fp, tn = 0, 10, 0, 90
-                throughput, latency = 30.0, 40.0
+            tp, fn, fp, tn, throughput, latency = \
+                _attack_metrics(attack_type, action)
         else:
             if action == 1:        # BLOCK during peace — most disruptive FP
                 tp, fn, fp, tn = 0, 0, 15, 75
