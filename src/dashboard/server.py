@@ -316,8 +316,12 @@ state = DashboardState()
 async def _lifespan(app: FastAPI):
     """Capture the running event loop for thread-safe publish_sync."""
     state._loop = asyncio.get_running_loop()
-    yield
-    state._loop = None
+    try:
+        yield
+    except asyncio.CancelledError:
+        pass
+    finally:
+        state._loop = None
 
 
 app = FastAPI(title="RL Zero-Trust Dashboard", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -356,11 +360,11 @@ async def sse_stream(request: Request):
                     event = await asyncio.wait_for(q.get(), timeout=15.0)
                     yield f"data: {json.dumps(event)}\n\n"
                 except asyncio.TimeoutError:
-                    # Check disconnect inside timeout to avoid 15s zombie lag
                     if await request.is_disconnected():
                         break
-                    # Keep-alive comment to prevent proxy/browser timeout
                     yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
         finally:
             state.unsubscribe(q)
 

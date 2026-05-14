@@ -691,6 +691,8 @@ _shutdown_requested = False
 
 def _signal_handler(signum, frame):
     global _shutdown_requested
+    if _shutdown_requested:
+        return
     _shutdown_requested = True
     print("\nShutdown requested — cleaning up...")
 
