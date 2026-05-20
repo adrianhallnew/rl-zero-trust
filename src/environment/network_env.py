@@ -208,6 +208,7 @@ class NetworkSecurityEnv(gym.Env):
         self._seed = seed
         self._sim_attack_active = False
         self._sim_attack_type: Optional[str] = None
+        self._external_attack_control = False
 
         # Attack orchestrator (simulation mode)
         if self._sim_mode:
@@ -461,8 +462,21 @@ class NetworkSecurityEnv(gym.Env):
             state[offset + 11] = self._rng.uniform(0.0, 0.1)    # tx_errors
             state[offset + 12] = self._rng.uniform(0.5, 2.0)    # conn rate
 
-        # Use attack orchestrator for realistic attack injection
-        if self._orchestrator is not None:
+        # When under external attack control (dashboard/live_demo), the
+        # AttackScheduler is the sole source of attack truth — skip the
+        # orchestrator's autonomous attack injection to avoid overriding
+        # the scheduler's stop/start signals.
+        if self._external_attack_control:
+            if self._sim_attack_active and self._orchestrator is not None:
+                for attack in self._orchestrator._active_attacks:
+                    state = attack.inject_signature(state, self._rng)
+            if self._sim_attack_active:
+                self._sim_throughput = self._rng.uniform(30.0, 70.0)
+                self._sim_latency = self._rng.uniform(15.0, 45.0)
+            else:
+                self._sim_throughput = self._rng.uniform(85.0, 100.0)
+                self._sim_latency = self._rng.uniform(2.0, 8.0)
+        elif self._orchestrator is not None:
             state, orch_info = self._orchestrator.step(state)
             self._sim_attack_active = orch_info["attack_active"]
             self._sim_throughput = orch_info["throughput_mbps"]
@@ -621,6 +635,7 @@ class NetworkSecurityEnv(gym.Env):
             active: Whether an attack is currently firing.
             attack_type: Attack label, e.g. ``"ddos"``, ``"port_scan"``.
         """
+        self._external_attack_control = True
         self._sim_attack_active = active
         self._sim_attack_type = attack_type if active else None
 

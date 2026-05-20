@@ -235,7 +235,10 @@ class AttackScheduler:
         """Terminate and clear all tracked attack processes.
 
         Sends SIGTERM first, waits up to 3 s total for graceful exit,
-        then escalates to SIGKILL for any survivors.
+        then escalates to SIGKILL for any survivors.  Also kills orphaned
+        attack scripts inside the Mininet container since terminating the
+        host-side ``docker exec`` process does not reliably propagate
+        signals into the container.
         """
         for proc in self._processes:
             try:
@@ -256,6 +259,18 @@ class AttackScheduler:
             except OSError:
                 pass
         self._processes.clear()
+
+        # Kill orphaned attack scripts inside the container
+        for script in ATTACK_CMD_MAP.values():
+            try:
+                subprocess.run(
+                    ["docker", "exec", "mininet", "pkill", "-f", script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                pass
 
     def _reap_processes(self) -> None:
         """Remove terminated processes from the tracking list."""
