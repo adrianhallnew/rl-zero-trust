@@ -91,6 +91,19 @@ DEMO_ACTION_BIAS = {
     "mixed":    np.array([0.0,   1.0,   1.0,     3.0]),     # multi → RATE_LIMIT
 }
 
+# PPO demo targets: blend model output toward these to hit correct discrete mapping.
+# Needed because PPO checkpoints can saturate (e.g. rate_limit=1.0 always).
+# Blend ratio: 10% model + 90% target — preserves some model influence while
+# guaranteeing the correct discrete action via _continuous_to_discrete thresholds.
+PPO_DEMO_TARGETS = {
+    None:       np.array([0.1, 0.1, 0.0]),   # → ALLOW  (rl ≤ 0.3)
+    "ddos":     np.array([0.5, 0.1, 0.0]),   # → RATE_LIMIT (0.3 < rl ≤ 0.7)
+    "portscan": np.array([0.9, 0.1, 0.0]),   # → BLOCK (rl > 0.7)
+    "spoofing": np.array([0.1, 0.8, 0.0]),   # → REROUTE (rl ≤ 0.3 AND rr > 0.5)
+    "mixed":    np.array([0.5, 0.1, 0.0]),   # → RATE_LIMIT
+}
+PPO_DEMO_BLEND = 0.1  # model weight (target weight = 1 - this)
+
 # ---------------------------------------------------------------------------
 # Attack Scheduler
 # ---------------------------------------------------------------------------
@@ -580,7 +593,12 @@ def run_rl_loop(
             else:
                 atk_type = attack_scheduler.attack_type
                 bias = DEMO_ACTION_BIAS.get(atk_type, DEMO_ACTION_BIAS[None])
-                biased = q_values + bias
+                q_range = q_values.max() - q_values.min()
+                if q_range > 1e-8:
+                    q_norm = (q_values - q_values.min()) / q_range
+                else:
+                    q_norm = np.zeros_like(q_values)
+                biased = q_norm + bias
                 action = int(np.argmax(biased))
                 logger.debug("Demo bias applied: %s -> action %d", atk_type, action)
             continuous_action = None
@@ -589,6 +607,15 @@ def run_rl_loop(
                 obs, deterministic=True,
             )
             continuous_action = action.copy() if isinstance(action, np.ndarray) else None
+            if not no_demo_bias and isinstance(action, np.ndarray):
+                atk_type = attack_scheduler.attack_type
+                target = PPO_DEMO_TARGETS.get(atk_type, PPO_DEMO_TARGETS[None])
+                action = PPO_DEMO_BLEND * action + (1 - PPO_DEMO_BLEND) * target
+                action[0] = np.clip(action[0], 0.0, 1.0)
+                action[1] = np.clip(action[1], 0.0, 1.0)
+                action[2] = np.clip(action[2], -1.0, 1.0)
+                logger.debug("PPO demo blend: %s -> [%.3f, %.3f, %.3f]",
+                             atk_type, action[0], action[1], action[2])
 
         # Step environment
         obs, reward, terminated, truncated, info = env.step(action)

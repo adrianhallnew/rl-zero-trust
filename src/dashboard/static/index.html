@@ -344,6 +344,22 @@
         </div>
       </div>
 
+      <!-- Attack Type Distribution -->
+      <div class="card bg-base-100 shadow">
+        <div class="card-body p-3">
+          <h3 class="card-title text-sm">
+            <i class="fa-solid fa-shield-halved mr-1"></i> Attack Distribution
+          </h3>
+          <div class="grid grid-cols-5 gap-1 mt-2 text-center text-xs font-mono">
+            <div><span class="text-success">Clean</span><br><span id="atk-clean" class="text-lg font-bold">0</span></div>
+            <div><span style="color:#ef4444">DDoS</span><br><span id="atk-ddos" class="text-lg font-bold">0</span></div>
+            <div><span style="color:#f59e0b">Scan</span><br><span id="atk-portscan" class="text-lg font-bold">0</span></div>
+            <div><span style="color:var(--clr-spoofing)">Spoof</span><br><span id="atk-spoofing" class="text-lg font-bold">0</span></div>
+            <div><span style="color:#f43f5e">Mixed</span><br><span id="atk-mixed" class="text-lg font-bold">0</span></div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -2471,7 +2487,28 @@ function updateActionDistribution(ev) {
     actionDistCounts[a]++;
     actionDonutChart.data.datasets[0].data = [actionDistCounts[0], actionDistCounts[1], actionDistCounts[2], actionDistCounts[3]];
     actionDonutChart.update('none');
+    document.getElementById('ad-allow').textContent = actionDistCounts[0];
+    document.getElementById('ad-block').textContent = actionDistCounts[1];
+    document.getElementById('ad-reroute').textContent = actionDistCounts[2];
+    document.getElementById('ad-ratelimit').textContent = actionDistCounts[3];
   }
+}
+
+// ── Attack Type Distribution ─────────────────────────────────────
+const attackTypeCounts = { clean: 0, ddos: 0, portscan: 0, spoofing: 0, mixed: 0 };
+
+function updateAttackDistribution(ev) {
+  if (ev.attack_active && ev.attack_type) {
+    const key = ev.attack_type.toLowerCase();
+    if (key in attackTypeCounts) attackTypeCounts[key]++;
+  } else {
+    attackTypeCounts.clean++;
+  }
+  document.getElementById('atk-clean').textContent = attackTypeCounts.clean;
+  document.getElementById('atk-ddos').textContent = attackTypeCounts.ddos;
+  document.getElementById('atk-portscan').textContent = attackTypeCounts.portscan;
+  document.getElementById('atk-spoofing').textContent = attackTypeCounts.spoofing;
+  document.getElementById('atk-mixed').textContent = attackTypeCounts.mixed;
 }
 
 // ── Policy Decision Explainability ───────────────────────────────
@@ -2710,6 +2747,7 @@ async function replayHistory() {
       updateConfusionMatrix(ev);
       updateActionTimeline(ev);
       updateActionDistribution(ev);
+      updateAttackDistribution(ev);
       lastStepEvent = ev;
     });
 
@@ -2778,6 +2816,9 @@ function applyLogFilter() {
 // =====================================================================
 // WIRE NEW FEATURES INTO handleEvent
 // =====================================================================
+let sessionRefreshCounter = 0;
+const SESSION_REFRESH_INTERVAL = 20;
+
 const _origHandleEvent = handleEvent;
 handleEvent = function(event) {
   _origHandleEvent(event);
@@ -2787,7 +2828,13 @@ handleEvent = function(event) {
     updateCumulativeReward(event);
     updateCountdown(event);
     updateActionDistribution(event);
+    updateAttackDistribution(event);
     updateExplainability(event);
+
+    sessionRefreshCounter++;
+    if (sessionRefreshCounter % SESSION_REFRESH_INTERVAL === 0) {
+      loadSessionComparison();
+    }
 
     // C8: Hide loading state on first event
     const loadingEl = document.getElementById('live-loading');
