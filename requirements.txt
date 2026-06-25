@@ -3,18 +3,18 @@
 # ============================================================
 
 # --- Core ML / Deep Learning ---
-tensorflow_cpu==2.20.0
-tensorboard==2.20.0
+tensorflow_cpu>=2.16.0
+tensorboard>=2.16.0
 
 # --- Reinforcement Learning ---
 gymnasium==1.2.3
 
 # --- Scientific Computing & Data ---
-numpy==1.26.4
+numpy>=1.26.4
 pandas==2.2.3
 
 # --- Visualization ---
-matplotlib==3.7.1
+matplotlib>=3.9.0
 
 # --- HTTP / Networking ---
 requests>=2.32.3

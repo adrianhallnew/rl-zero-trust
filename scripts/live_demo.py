@@ -555,13 +555,19 @@ def run_rl_loop(
     if agent_name == "dqn":
         config = get_hyperparameters("dqn")
         agent = DQNAgent(state_dim=65, config=config)
-        agent.load(DQN_CHECKPOINT, live_mode=True)
-        logger.info("DQN agent loaded from %s (live_mode)", DQN_CHECKPOINT)
+        try:
+            agent.load(DQN_CHECKPOINT, live_mode=True)
+            logger.info("DQN agent loaded from %s (live_mode)", DQN_CHECKPOINT)
+        except (ValueError, OSError):
+            logger.warning("No DQN checkpoint found at %s — starting untrained", DQN_CHECKPOINT)
     else:
         config = get_hyperparameters("ppo")
         agent = PPOAgent(state_dim=65, action_dim=3, config=config)
-        agent.load(PPO_CHECKPOINT)
-        logger.info("PPO agent loaded from %s", PPO_CHECKPOINT)
+        try:
+            agent.load(PPO_CHECKPOINT)
+            logger.info("PPO agent loaded from %s", PPO_CHECKPOINT)
+        except (ValueError, OSError):
+            logger.warning("No PPO checkpoint found at %s — starting untrained", PPO_CHECKPOINT)
 
     # --- RL loop ---
     obs, info = env.reset()

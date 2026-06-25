@@ -30,7 +30,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 RUN pip3 install --no-cache-dir \
     scapy==2.7.0 \
     requests==2.32.3 \
-    PyYAML==6.0.1
+    PyYAML==6.0.1 \
+    numpy>=1.26.4
 
 WORKDIR /app
 
